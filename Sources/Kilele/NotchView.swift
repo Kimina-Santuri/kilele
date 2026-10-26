@@ -14,7 +14,8 @@ struct NotchRoot: View {
         let radius: CGFloat = model.expanded ? 24 : model.peek != nil ? 18 : min(10, model.notchSize.height / 3)
         let shape = UnevenRoundedRectangle(cornerRadii: .init(topLeading: 0, bottomLeading: radius, bottomTrailing: radius, topTrailing: 0), style: .continuous)
         ZStack(alignment: .top) {
-            NotchBackground(glass: model.seeThrough && (model.expanded || model.peek != nil), band: model.notchSize.height)
+            // The pill is glass all over (the physical notch hides its middle); open, the top strip stays black.
+            NotchBackground(glass: model.seeThrough, band: model.expanded || model.peek != nil ? model.notchSize.height : 0)
                 .frame(width: size.width, height: size.height)
                 .overlay(alignment: .top) {
                     Group {
@@ -41,8 +42,8 @@ struct NotchRoot: View {
     }
 }
 
-/// Solid black, or (open, when see-through is on) dark frosted glass with a black band at the top where the physical
-/// notch and menu bar are, fading into the glass.
+/// Solid black, or (see-through on) dark frosted glass: the pill all over, and open with a black band at the top
+/// where the physical notch and menu bar are, fading into the glass.
 struct NotchBackground: View {
     var glass: Bool
     var band: CGFloat
@@ -52,10 +53,12 @@ struct NotchBackground: View {
             ZStack(alignment: .top) {
                 GlassView()
                 Color.black.opacity(0.3)
-                VStack(spacing: 0) {
-                    Color.black.frame(height: band)
-                    LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom).frame(height: 16)
-                    Spacer(minLength: 0)
+                if band > 0 {
+                    VStack(spacing: 0) {
+                        Color.black.frame(height: band)
+                        LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom).frame(height: 16)
+                        Spacer(minLength: 0)
+                    }
                 }
             }
         } else {
@@ -357,7 +360,7 @@ struct SettingsMenu: View {
                 model.openAtLogin = SMAppService.mainApp.status == .enabled
             }))
             Toggle("Pill mode (icons beside the notch)", isOn: $model.pillMode)
-            Toggle("See-through when open", isOn: $model.seeThrough)
+            Toggle("See-through (frosted glass)", isOn: $model.seeThrough)
             Toggle("Show music beside the notch", isOn: $model.showMusicWings).disabled(model.pillMode)
             Toggle("Lyrics (from lrclib.net)", isOn: $lyrics.enabled)
             Toggle("New downloads and screenshots to the shelf", isOn: $autoShelf.enabled)
