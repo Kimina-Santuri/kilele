@@ -42,8 +42,8 @@ struct NotchRoot: View {
     }
 }
 
-/// Solid black, or (see-through on) dark frosted glass: the pill all over, and open with a black band at the top
-/// where the physical notch and menu bar are, fading into the glass.
+/// Solid black, or (see-through on) dark frosted glass: the pill all over, and open with a darker (but still
+/// see-through) band along the tab strip, fading into the glass below.
 struct NotchBackground: View {
     var glass: Bool
     var band: CGFloat
@@ -55,8 +55,8 @@ struct NotchBackground: View {
                 Color.black.opacity(0.3)
                 if band > 0 {
                     VStack(spacing: 0) {
-                        Color.black.frame(height: band)
-                        LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom).frame(height: 16)
+                        Color.black.opacity(0.45).frame(height: band)
+                        LinearGradient(colors: [.black.opacity(0.45), .black.opacity(0)], startPoint: .top, endPoint: .bottom).frame(height: 16)
                         Spacer(minLength: 0)
                     }
                 }
