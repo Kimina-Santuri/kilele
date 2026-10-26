@@ -322,6 +322,7 @@ struct ExpandedView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .foregroundStyle(.white)
+        .background(DailyBackdrop())
         .onDrop(of: [.fileURL], isTargeted: Binding(get: { model.dropping }, set: { model.dropping = $0 })) { providers in
             model.tab = .shelf
             shelf.accept(providers)

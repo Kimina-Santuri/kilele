@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Something new each day: a short quote from a science-fiction writer or a scientist, and a small ASCII animation,
@@ -45,11 +46,9 @@ enum Daily {
     static var day: Int { Calendar.current.dateComponents([.day], from: Date(timeIntervalSince1970: 0), to: Date()).day ?? 0 }
     static var quote: Quote { quotes[day % quotes.count] }
 
-    // MARK: Animations: (time in seconds) -> lines of text, 24 wide by 5 tall.
+    // MARK: Animations: (time in seconds, columns, rows) -> lines of text, drawn to fill whatever space they get.
 
-    struct Animation { let name: String; let frame: (Double) -> [String] }
-
-    static let width = 24, height = 5
+    struct Animation { let name: String; let frame: (Double, Int, Int) -> [String] }
 
     static let animations: [Animation] = [
         Animation(name: "rain", frame: rain),
@@ -74,141 +73,189 @@ enum Daily {
         return Double(h % 10_000) / 10_000
     }
 
-    static func blank() -> [[Character]] { Array(repeating: Array(repeating: " ", count: width), count: height) }
-    static func lines(_ grid: [[Character]]) -> [String] { grid.map { String($0) } }
-
-    static func rain(_ t: Double) -> [String] {
-        var g = blank(), step = Int(t * 10)
-        for x in 0..<width where noise(x, 0) < 0.55 {
-            let speed = 1 + Int(noise(x, 1) * 2), y = (step * speed / 2 + Int(noise(x, 2) * 9)) % (height + 3)
-            if y < height { g[y][x] = "|" }
-            if y - 1 >= 0 && y - 1 < height { g[y - 1][x] = "'" }
+    /// A character grid that ignores writes outside it.
+    struct Grid {
+        let w: Int, h: Int
+        var cells: [[Character]]
+        init(_ w: Int, _ h: Int) { self.w = max(1, w); self.h = max(1, h); cells = Array(repeating: Array(repeating: " ", count: self.w), count: self.h) }
+        subscript(x: Int, y: Int) -> Character {
+            get { x >= 0 && x < w && y >= 0 && y < h ? cells[y][x] : " " }
+            set { if x >= 0 && x < w && y >= 0 && y < h { cells[y][x] = newValue } }
         }
-        for x in 0..<width where noise(x, step / 3) < 0.15 { g[height - 1][x] = g[height - 1][x] == " " ? "." : g[height - 1][x] }
-        return lines(g)
+        mutating func write(_ text: String, x: Int, y: Int) { for (i, c) in text.enumerated() where c != " " { self[x + i, y] = c } }
+        var lines: [String] { cells.map { String($0) } }
     }
 
-    static func waves(_ t: Double) -> [String] {
-        var g = blank()
-        for x in 0..<width {
-            let h = 2 + 1.6 * sin(Double(x) * 0.45 - t * 2.4) + 0.6 * sin(Double(x) * 0.9 + t * 1.3)
-            let top = max(0, min(height - 1, height - 1 - Int(h.rounded())))
-            g[top][x] = "~"
-            for y in (top + 1)..<height { g[y][x] = y == top + 1 ? "≈" : "░" }
+    static func rain(_ t: Double, _ w: Int, _ h: Int) -> [String] {
+        var g = Grid(w, h); let step = Int(t * 12), fall = h + 8
+        for x in 0..<w where noise(x, 0) < 0.45 {
+            let speed = 1 + Int(noise(x, 1) * 2), y = (step * speed / 2 + Int(noise(x, 2) * Double(fall))) % fall
+            g[x, y] = "|"; g[x, y - 1] = "'"; g[x, y - 2] = "'"
         }
-        return lines(g)
+        for x in 0..<w where noise(x, step / 3) < 0.12 { if g[x, h - 1] == " " { g[x, h - 1] = "." } }
+        return g.lines
     }
 
-    static func stars(_ t: Double) -> [String] {
-        var g = blank(), step = Int(t * 4)
-        for i in 0..<16 {
-            let x = Int(noise(i, 10) * Double(width)), y = Int(noise(i, 11) * Double(height))
-            let phase = (step + Int(noise(i, 12) * 8)) % 8
-            g[y][x] = ["·", "·", "+", "*", "✦", "*", "+", " "][phase]
+    static func waves(_ t: Double, _ w: Int, _ h: Int) -> [String] {
+        var g = Grid(w, h); let H = Double(h)
+        for x in 0..<w {
+            let X = Double(x)
+            let level = H * 0.45 + H * 0.2 * sin(X * 0.09 - t * 1.6) + H * 0.08 * sin(X * 0.23 + t * 1.1)
+            let top = Int(level.rounded())
+            g[x, top] = "~"
+            for y in (top + 1)..<max(top + 1, h) { g[x, y] = y == top + 1 ? "≈" : (y - top < 4 ? "░" : "·") }
         }
-        let shoot = (step / 2) % 16
-        if shoot < 8 { let x = width - 1 - shoot * 3, y = shoot / 3; if x >= 0 && y < height { g[y][x] = "*"; if x + 1 < width { g[y][x + 1] = "-" } } }
-        return lines(g)
+        return g.lines
     }
 
-    static func vinyl(_ t: Double) -> [String] {
-        let marks = ["|", "/", "-", "\\"], m = marks[Int(t * 8) % 4]
-        let notes = ["♪  ", " ♫ ", "  ♪", " ♫ "][Int(t * 2) % 4]
-        return [
-            "     .-\"\"\"\"-.          ",
-            "   /  .--.   \\    \(notes)  ",
-            "  |  ( \(m)  )  |  ~~~~~~ ",
-            "   \\  '--'   /         ",
-            "     '-....-'          ",
-        ].map { String($0.prefix(width)).padding(toLength: width, withPad: " ", startingAt: 0) }
-    }
-
-    static func levels(_ t: Double) -> [String] {
-        var g = blank()
-        for x in stride(from: 0, to: width, by: 2) {
-            let beat = pow(max(0, sin(t * 2 * .pi * 2)), 6)
-            let v = 0.25 + 0.35 * abs(sin(t * (1.5 + noise(x, 20) * 3) + Double(x))) + 0.4 * beat * (1 - Double(x) / Double(width))
-            let h = Int((v * Double(height)).rounded())
-            for y in 0..<height where height - y <= h { g[y][x] = "█" }
+    static func stars(_ t: Double, _ w: Int, _ h: Int) -> [String] {
+        var g = Grid(w, h); let step = Int(t * 4)
+        for i in 0..<max(16, w * h / 35) {
+            let x = Int(noise(i, 10) * Double(w)), y = Int(noise(i, 11) * Double(h))
+            g[x, y] = ["·", "·", "+", "*", "✦", "*", "+", " "][(step + Int(noise(i, 12) * 8)) % 8]
         }
-        return lines(g)
+        // A shooting star now and then, across from the top right.
+        let run = step % 40
+        if run < 20 { for k in 0..<4 { g[w - 1 - (run * 4) + k * 2, run / 2 + 1 - k / 2] = k == 0 ? "*" : "-" } }
+        return g.lines
     }
 
-    static func sunrise(_ t: Double) -> [String] {
-        let cycle = t.truncatingRemainder(dividingBy: 12) / 12, rise = Int(sin(cycle * .pi) * 3.2)
-        var g = blank()
-        let cx = width / 2, cy = height - 1 - rise
-        let rays: [(Int, Int, Character)] = [(-5, 0, "-"), (5, 0, "-"), (-3, -1, "\\"), (3, -1, "/"), (0, -2, "|")]
-        for (dx, dy, c) in rays where Int(t * 3) % 2 == 0 || dy == 0 {
-            let x = cx + dx, y = cy + dy
-            if y >= 0 && y < height - 1 && x >= 0 && x < width { g[y][x] = c }
-        }
-        for dx in -2...2 { let y = cy; if y >= 0 && y < height - 1 { g[y][cx + dx] = abs(dx) == 2 ? "(" : "@" } }
-        if cy >= 0 && cy < height - 1 { g[cy][cx + 2] = ")" }
-        for x in 0..<width { g[height - 1][x] = "_" }
-        return lines(g)
+    /// Distance from (cx, cy) in rows, counting a column as half a row (characters are about twice as tall as wide).
+    static func dist(_ x: Int, _ y: Int, _ cx: Double, _ cy: Double) -> (d: Double, angle: Double) {
+        let dx = (Double(x) - cx) / 2, dy = Double(y) - cy
+        return ((dx * dx + dy * dy).squareRoot(), atan2(dy, dx))
     }
 
-    static func bounce(_ t: Double) -> [String] {
-        var g = blank()
-        let span = Double(width - 1), p = (t * 6).truncatingRemainder(dividingBy: span * 2)
-        let x = Int(p < span ? p : span * 2 - p)
-        let y = height - 2 - Int(abs(sin(t * 3.2)) * Double(height - 2))
-        g[max(0, y)][x] = "o"
-        for i in 0..<width { g[height - 1][i] = "▔" }
-        if y >= height - 2 { g[height - 1][x] = "^" }
-        return lines(g)
-    }
-
-    static func fire(_ t: Double) -> [String] {
-        var g = blank(), step = Int(t * 12)
-        let ramp: [Character] = [" ", ".", ":", "*", "s", "S", "#", "$"]
-        for y in 0..<height {
-            for x in 0..<width {
-                let base = 1 - Double(height - 1 - y) / Double(height) // hotter at the bottom
-                let centre = 1 - abs(Double(x) - Double(width) / 2) / (Double(width) / 2)
-                let v = base * centre * 1.4 + (noise(x + step * 31, y + step) - 0.5) * 0.6
-                g[y][x] = ramp[max(0, min(ramp.count - 1, Int(v * Double(ramp.count))))]
+    static func vinyl(_ t: Double, _ w: Int, _ h: Int) -> [String] {
+        var g = Grid(w, h); let r = Double(h) * 0.46, cx = Double(w) * 0.3, cy = Double(h) / 2 - 0.5
+        let spin = (t * 3.5).truncatingRemainder(dividingBy: 2 * .pi)
+        for y in 0..<h {
+            for x in 0..<w {
+                let (d, a) = dist(x, y, cx, cy)
+                guard d <= r else { continue }
+                var diff = abs(a - spin + .pi).truncatingRemainder(dividingBy: 2 * .pi) - .pi
+                diff = abs(diff)
+                if d < r * 0.12 { g[x, y] = "o" }
+                else if d < r * 0.32 { g[x, y] = "@" }
+                else if diff < 0.12 { g[x, y] = "/" }
+                else { g[x, y] = Int(d * 1.3) % 2 == 0 ? ":" : "." }
             }
         }
-        return lines(g)
+        // Notes drifting up and to the right.
+        for i in 0..<8 {
+            let life = (t * 0.6 + noise(i, 40) * 5).truncatingRemainder(dividingBy: 5) / 5
+            g[Int(cx + r * 2.2 + Double(i) * Double(w) * 0.06 + life * 10), Int(Double(h) * (0.85 - life * 0.8))] = i % 2 == 0 ? "♪" : "♫"
+        }
+        return g.lines
     }
 
-    static func dancer(_ t: Double) -> [String] {
+    static func levels(_ t: Double, _ w: Int, _ h: Int) -> [String] {
+        var g = Grid(w, h)
+        let beat = pow(max(0, sin(t * 2 * .pi * 2)), 6)
+        for x in stride(from: 0, to: w, by: 3) {
+            let v = 0.15 + 0.4 * abs(sin(t * (1.2 + noise(x, 20) * 3) + Double(x) * 0.3)) + 0.45 * beat * (1 - Double(x) / Double(w))
+            let top = h - Int((v * Double(h)).rounded())
+            for y in max(0, top)..<h { g[x, y] = "█"; g[x + 1, y] = "█" }
+            g[x, top - 2] = "▁"; g[x + 1, top - 2] = "▁" // peak marker
+        }
+        return g.lines
+    }
+
+    static func sunrise(_ t: Double, _ w: Int, _ h: Int) -> [String] {
+        var g = Grid(w, h)
+        let cycle = t.truncatingRemainder(dividingBy: 20) / 20, r = Double(h) * 0.22
+        let cx = Double(w) / 2, cy = Double(h) - 1 - sin(cycle * .pi) * Double(h) * 0.6
+        let turn = t * 0.4
+        for y in 0..<(h - 1) {
+            for x in 0..<w {
+                let (d, a) = dist(x, y, cx, cy)
+                if d <= r { g[x, y] = d > r - 1 ? "o" : "@"; continue }
+                // Rays: 12 spokes, turning slowly, out to twice the sun's size.
+                let spoke = (a - turn) * 6 / .pi
+                if d < r * 2.4 && abs(spoke - spoke.rounded()) < 0.08 { g[x, y] = "·" }
+            }
+        }
+        for x in 0..<w { g[x, h - 1] = "_" }
+        return g.lines
+    }
+
+    static func bounce(_ t: Double, _ w: Int, _ h: Int) -> [String] {
+        var g = Grid(w, h)
+        for x in 0..<w { g[x, h - 1] = "▔" }
+        for i in 0..<3 {
+            let span = Double(w - 1), speed = 7 + Double(i) * 3
+            let p = (t * speed + Double(i) * span * 0.6).truncatingRemainder(dividingBy: span * 2)
+            let x = Int(p < span ? p : span * 2 - p)
+            let y = h - 2 - Int(abs(sin(t * (2.2 + Double(i) * 0.7))) * Double(h - 2))
+            g[x, y] = "o"; g[x - 1, y] = g[x - 1, y] == " " ? "·" : g[x - 1, y]
+            if y >= h - 2 { g[x, h - 1] = "^" }
+        }
+        return g.lines
+    }
+
+    static func fire(_ t: Double, _ w: Int, _ h: Int) -> [String] {
+        var g = Grid(w, h); let step = Int(t * 12)
+        let ramp: [Character] = [" ", ".", ":", "*", "s", "S", "#", "$"]
+        for y in 0..<h {
+            for x in 0..<w {
+                let heat = 1 - Double(h - 1 - y) / Double(h) // hotter at the bottom
+                let flames = 0.55 + 0.45 * sin(Double(x) * 0.12 + sin(t * 0.7) * 2) // several flames across
+                let v = heat * heat * flames * 1.5 + (noise(x + step * 31, y + step) - 0.5) * 0.5
+                g[x, y] = ramp[max(0, min(ramp.count - 1, Int(v * Double(ramp.count))))]
+            }
+        }
+        return g.lines
+    }
+
+    static func dancer(_ t: Double, _ w: Int, _ h: Int) -> [String] {
+        var g = Grid(w, h)
         let poses = [
             [" \\o/ ", "  |  ", " / \\ "],
             [" _o_ ", "  |  ", " | | "],
             ["  o/ ", " /|  ", " / > "],
             [" \\o  ", "  |\\ ", " < \\ "],
         ]
-        let p = poses[Int(t * 3) % poses.count], q = poses[(Int(t * 3) + 2) % poses.count]
-        let floor = Int(t * 6) % 2 == 0 ? "~=~=~=~=~=~=~=~=~=~=~=~=" : "=~=~=~=~=~=~=~=~=~=~=~=~"
-        return ["       ♪          ♫     "] + (0..<3).map { "  " + p[$0] + "          " + q[$0] + "  " } + [floor]
+        let beat = Int(t * 3)
+        for (n, x) in stride(from: 2, to: w - 5, by: 13).enumerated() {
+            let pose = poses[(beat + n * 3) % poses.count]
+            for row in 0..<3 { g.write(pose[row], x: x, y: h - 4 + row) }
+        }
+        for x in 0..<w { g[x, h - 1] = (x + beat) % 2 == 0 ? "~" : "=" }
+        for i in 0..<max(6, w / 8) {
+            let life = (t * 0.5 + noise(i, 50) * 4).truncatingRemainder(dividingBy: 4) / 4
+            g[Int(noise(i, 51) * Double(w)), Int(Double(h - 5) * (1 - life))] = i % 2 == 0 ? "♪" : "♫"
+        }
+        return g.lines
     }
 
-    static func code(_ t: Double) -> [String] {
-        var g = blank(), step = Int(t * 9)
-        for x in stride(from: 0, to: width, by: 2) {
-            let head = (step + Int(noise(x, 30) * 20)) % (height + 4)
-            for y in 0..<height where y <= head && head - y < 3 {
-                g[y][x] = noise(x * 7 + y, step) < 0.5 ? "0" : "1"
-            }
+    static func code(_ t: Double, _ w: Int, _ h: Int) -> [String] {
+        var g = Grid(w, h); let step = Int(t * 9), trail = max(3, h / 3)
+        for x in stride(from: 0, to: w, by: 2) {
+            let head = (step + Int(noise(x, 30) * Double(h * 2))) % (h + trail + 6)
+            for y in 0..<h where y <= head && head - y < trail { g[x, y] = noise(x * 7 + y, step) < 0.5 ? "0" : "1" }
         }
-        return lines(g)
+        return g.lines
     }
 }
 
-/// Today's animation, about 8 frames a second.
-struct DailyAnimation: View {
+/// Today's animation filling the space behind the open notch, very faint, about 8 frames a second.
+struct DailyBackdrop: View {
+    private static let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    private static let cell = CGSize(width: ("M" as NSString).size(withAttributes: [.font: font]).width,
+                                     height: NSLayoutManager().defaultLineHeight(for: font))
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 8)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            Text(Daily.animation.frame(t).joined(separator: "\n"))
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.7))
-                .lineSpacing(-1)
-                .fixedSize()
+        GeometryReader { geo in
+            let cols = Int(geo.size.width / Self.cell.width), rows = Int(geo.size.height / Self.cell.height)
+            TimelineView(.animation(minimumInterval: 1 / 8)) { context in
+                Text(Daily.animation.frame(context.date.timeIntervalSinceReferenceDate, cols, rows).joined(separator: "\n"))
+                    .font(Font(Self.font))
+                    .foregroundStyle(.white.opacity(0.07))
+                    .fixedSize()
+                    .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
+            }
         }
+        .allowsHitTesting(false)
     }
 }
 
@@ -224,12 +271,7 @@ struct DailyQuote: View {
     }
 }
 
-/// The quote with the animation beside it.
+/// The quote (the animation runs behind the whole open notch).
 struct DailyCard: View {
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            DailyQuote(compact: true).frame(maxWidth: .infinity, alignment: .leading)
-            DailyAnimation()
-        }
-    }
+    var body: some View { DailyQuote(compact: true).frame(maxWidth: .infinity, alignment: .leading) }
 }
