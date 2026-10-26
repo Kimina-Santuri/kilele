@@ -14,7 +14,7 @@ struct NotchRoot: View {
         let radius: CGFloat = model.expanded ? 24 : model.peek != nil ? 18 : min(10, model.notchSize.height / 3)
         let shape = UnevenRoundedRectangle(cornerRadii: .init(topLeading: 0, bottomLeading: radius, bottomTrailing: radius, topTrailing: 0), style: .continuous)
         ZStack(alignment: .top) {
-            shape.fill(Color.black)
+            NotchBackground(glass: model.seeThrough && (model.expanded || model.peek != nil), band: model.notchSize.height)
                 .frame(width: size.width, height: size.height)
                 .overlay(alignment: .top) {
                     Group {
@@ -39,6 +39,43 @@ struct NotchRoot: View {
         .animation(.spring(response: 0.38, dampingFraction: 0.82), value: size)
         .environment(\.colorScheme, .dark)
     }
+}
+
+/// Solid black, or (open, when see-through is on) dark frosted glass with a black band at the top where the physical
+/// notch and menu bar are, fading into the glass.
+struct NotchBackground: View {
+    var glass: Bool
+    var band: CGFloat
+
+    var body: some View {
+        if glass {
+            ZStack(alignment: .top) {
+                GlassView()
+                Color.black.opacity(0.3)
+                VStack(spacing: 0) {
+                    Color.black.frame(height: band)
+                    LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom).frame(height: 16)
+                    Spacer(minLength: 0)
+                }
+            }
+        } else {
+            Color.black
+        }
+    }
+}
+
+/// The desktop behind, blurred (NSVisualEffectView, always active since the panel never becomes the main window).
+struct GlassView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .hudWindow
+        view.blendingMode = .behindWindow
+        view.state = .active
+        view.appearance = NSAppearance(named: .darkAqua)
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
 
 // MARK: Collapsed
@@ -320,6 +357,7 @@ struct SettingsMenu: View {
                 model.openAtLogin = SMAppService.mainApp.status == .enabled
             }))
             Toggle("Pill mode (icons beside the notch)", isOn: $model.pillMode)
+            Toggle("See-through when open", isOn: $model.seeThrough)
             Toggle("Show music beside the notch", isOn: $model.showMusicWings).disabled(model.pillMode)
             Toggle("Lyrics (from lrclib.net)", isOn: $lyrics.enabled)
             Toggle("New downloads and screenshots to the shelf", isOn: $autoShelf.enabled)

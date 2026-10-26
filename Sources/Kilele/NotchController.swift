@@ -21,6 +21,10 @@ final class NotchModel: ObservableObject {
     @Published var showMusicWings = UserDefaults.standard.object(forKey: "showMusicWings") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showMusicWings, forKey: "showMusicWings") }
     }
+    /// Open, the notch is frosted glass (the strip beside the camera stays black, like the menu bar).
+    @Published var seeThrough = UserDefaults.standard.object(forKey: "seeThrough") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(seeThrough, forKey: "seeThrough") }
+    }
     /// Collapsed, the notch is a pill with quick-access icons either side.
     @Published var pillMode = UserDefaults.standard.object(forKey: "pillMode") as? Bool ?? true {
         didSet { UserDefaults.standard.set(pillMode, forKey: "pillMode") }

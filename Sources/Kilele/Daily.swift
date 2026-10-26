@@ -1,52 +1,44 @@
 import SwiftUI
 
-/// Something new each day: a proverb (traditional, so free to use; mostly Swahili and other African ones) and a small
-/// ASCII animation, both picked by the date, so they change at midnight and stay the same all day.
+/// Something new each day: a short quote from a science-fiction writer or a scientist, and a small ASCII animation,
+/// both picked by the date, so they change at midnight and stay the same all day. Only well-sourced wording, with
+/// famous misattributions left out.
 enum Daily {
-    struct Quote { let text: String; let translation: String; let origin: String }
+    struct Quote { let text: String; let author: String }
 
     static let quotes: [Quote] = [
-        Quote(text: "Haba na haba hujaza kibaba.", translation: "Little by little fills the measure.", origin: "Swahili"),
-        Quote(text: "Pole pole ndio mwendo.", translation: "Slowly, slowly is the way to go.", origin: "Swahili"),
-        Quote(text: "Kidole kimoja hakivunji chawa.", translation: "One finger can't crush a louse.", origin: "Swahili"),
-        Quote(text: "Usipoziba ufa utajenga ukuta.", translation: "Fix the crack, or you'll rebuild the wall.", origin: "Swahili"),
-        Quote(text: "Mvumilivu hula mbivu.", translation: "The patient one eats the ripe fruit.", origin: "Swahili"),
-        Quote(text: "Asiyefunzwa na mamaye hufunzwa na ulimwengu.", translation: "Who isn't taught by their mother is taught by the world.", origin: "Swahili"),
-        Quote(text: "Bandu bandu huisha gogo.", translation: "Chip by chip, the log is finished.", origin: "Swahili"),
-        Quote(text: "Fimbo ya mbali haiui nyoka.", translation: "A stick far away doesn't kill the snake.", origin: "Swahili"),
-        Quote(text: "Penye nia pana njia.", translation: "Where there's a will there's a way.", origin: "Swahili"),
-        Quote(text: "Akili ni nywele, kila mtu ana zake.", translation: "Wisdom is like hair: everyone has their own.", origin: "Swahili"),
-        Quote(text: "Mchumia juani hulia kivulini.", translation: "Who works in the sun eats in the shade.", origin: "Swahili"),
-        Quote(text: "Dalili ya mvua ni mawingu.", translation: "Clouds are the sign of rain.", origin: "Swahili"),
-        Quote(text: "Maji yakimwagika hayazoleki.", translation: "Spilt water can't be gathered.", origin: "Swahili"),
-        Quote(text: "Kila ndege huruka kwa ubawa wake.", translation: "Every bird flies with its own wings.", origin: "Swahili"),
-        Quote(text: "Usiache mbachao kwa msala upitao.", translation: "Don't drop your old mat for a passing prayer rug.", origin: "Swahili"),
-        Quote(text: "Ukiona vyaelea, vimeundwa.", translation: "If you see it floating, someone built it.", origin: "Swahili"),
-        Quote(text: "Mwenda pole hajikwai.", translation: "Who walks slowly doesn't stumble.", origin: "Swahili"),
-        Quote(text: "Heri kujikwaa kidole kuliko kujikwaa ulimi.", translation: "Better to stub a toe than trip on your tongue.", origin: "Swahili"),
-        Quote(text: "Wapiganapo tembo nyasi huumia.", translation: "When elephants fight, the grass suffers.", origin: "Swahili"),
-        Quote(text: "Chovya chovya humaliza buyu la asali.", translation: "Dip by dip empties the gourd of honey.", origin: "Swahili"),
-        Quote(text: "Ngoma ivumayo haidumu.", translation: "The drum that booms loudest doesn't last.", origin: "Swahili"),
-        Quote(text: "Mtaka cha mvunguni sharti ainame.", translation: "Who wants what's under the bed must bend down.", origin: "Swahili"),
-        Quote(text: "Umoja ni nguvu, utengano ni udhaifu.", translation: "Unity is strength, division is weakness.", origin: "Swahili"),
-        Quote(text: "Siku njema huonekana asubuhi.", translation: "A good day shows itself in the morning.", origin: "Swahili"),
-        Quote(text: "If you want to go fast, go alone. If you want to go far, go together.", translation: "", origin: "African proverb"),
-        Quote(text: "A river cuts through rock not because of its power, but its persistence.", translation: "", origin: "Proverb"),
-        Quote(text: "However long the night, the dawn will break.", translation: "", origin: "African proverb"),
-        Quote(text: "The best time to plant a tree was twenty years ago. The second best time is now.", translation: "", origin: "Proverb"),
-        Quote(text: "When the music changes, so does the dance.", translation: "", origin: "Hausa proverb"),
-        Quote(text: "Smooth seas do not make skilful sailors.", translation: "", origin: "African proverb"),
-        Quote(text: "No one tests the depth of a river with both feet.", translation: "", origin: "Ashanti proverb"),
-        Quote(text: "The child who is not embraced by the village will burn it down to feel its warmth.", translation: "", origin: "African proverb"),
-        Quote(text: "Until the lion learns to write, tales of the hunt will glorify the hunter.", translation: "", origin: "African proverb"),
-        Quote(text: "A single bracelet does not jingle.", translation: "", origin: "Congolese proverb"),
-        Quote(text: "Rain does not fall on one roof alone.", translation: "", origin: "Cameroonian proverb"),
-        Quote(text: "He who learns, teaches.", translation: "", origin: "Ethiopian proverb"),
-        Quote(text: "Wood already touched by fire is not hard to set alight.", translation: "", origin: "Ashanti proverb"),
-        Quote(text: "Even the best cooking pot will not produce food.", translation: "", origin: "African proverb"),
-        Quote(text: "The fool speaks, the wise listen.", translation: "", origin: "Ethiopian proverb"),
-        Quote(text: "Where you will sit when you are old shows where you stood in youth.", translation: "", origin: "Yoruba proverb"),
-        Quote(text: "Move your neck according to the music.", translation: "", origin: "Ethiopian proverb"),
+        Quote(text: "Any sufficiently advanced technology is indistinguishable from magic.", author: "Arthur C. Clarke"),
+        Quote(text: "The only way of discovering the limits of the possible is to venture a little way past them into the impossible.", author: "Arthur C. Clarke"),
+        Quote(text: "The saddest aspect of life right now is that science gathers knowledge faster than society gathers wisdom.", author: "Isaac Asimov"),
+        Quote(text: "Violence is the last refuge of the incompetent.", author: "Isaac Asimov, Foundation"),
+        Quote(text: "It is good to have an end to journey toward; but it is the journey that matters, in the end.", author: "Ursula K. Le Guin"),
+        Quote(text: "The only thing that makes life possible is permanent, intolerable uncertainty; not knowing what comes next.", author: "Ursula K. Le Guin"),
+        Quote(text: "All that you touch you change. All that you change changes you.", author: "Octavia E. Butler, Parable of the Sower"),
+        Quote(text: "First forget inspiration. Habit is more dependable.", author: "Octavia E. Butler"),
+        Quote(text: "The future is already here — it's just not very evenly distributed.", author: "William Gibson"),
+        Quote(text: "I must not fear. Fear is the mind-killer.", author: "Frank Herbert, Dune"),
+        Quote(text: "The mystery of life isn't a problem to solve, but a reality to experience.", author: "Frank Herbert, Dune"),
+        Quote(text: "I love deadlines. I love the whooshing noise they make as they go by.", author: "Douglas Adams"),
+        Quote(text: "Don't Panic.", author: "Douglas Adams, The Hitchhiker's Guide to the Galaxy"),
+        Quote(text: "Reality is that which, when you stop believing in it, doesn't go away.", author: "Philip K. Dick"),
+        Quote(text: "We are what we pretend to be, so we must be careful about what we pretend to be.", author: "Kurt Vonnegut, Mother Night"),
+        Quote(text: "Specialization is for insects.", author: "Robert A. Heinlein"),
+        Quote(text: "Weakness and ignorance are not barriers to survival, but arrogance is.", author: "Liu Cixin, Death's End"),
+        Quote(text: "The cosmos is within us. We are made of star-stuff.", author: "Carl Sagan, Cosmos"),
+        Quote(text: "We are a way for the cosmos to know itself.", author: "Carl Sagan, Cosmos"),
+        Quote(text: "Extraordinary claims require extraordinary evidence.", author: "Carl Sagan"),
+        Quote(text: "The first principle is that you must not fool yourself — and you are the easiest person to fool.", author: "Richard Feynman"),
+        Quote(text: "What I cannot create, I do not understand.", author: "Richard Feynman"),
+        Quote(text: "The eternal mystery of the world is its comprehensibility.", author: "Albert Einstein"),
+        Quote(text: "Imagination is more important than knowledge.", author: "Albert Einstein"),
+        Quote(text: "Nothing in life is to be feared, it is only to be understood.", author: "Marie Curie"),
+        Quote(text: "How wonderful that we have met with a paradox. Now we have some hope of making progress.", author: "Niels Bohr"),
+        Quote(text: "Look up at the stars and not down at your feet.", author: "Stephen Hawking"),
+        Quote(text: "If I have seen further it is by standing on the shoulders of Giants.", author: "Isaac Newton"),
+        Quote(text: "Science progresses best when observations force us to alter our preconceptions.", author: "Vera Rubin"),
+        Quote(text: "Life need not be easy, provided only that it is not empty.", author: "Lise Meitner"),
+        Quote(text: "The good thing about science is that it's true whether or not you believe in it.", author: "Neil deGrasse Tyson"),
+        Quote(text: "Never be limited by other people's limited imaginations.", author: "Mae Jemison"),
     ]
 
     /// Days since a fixed start, so each day gets the next quote and animation.
@@ -220,20 +212,19 @@ struct DailyAnimation: View {
     }
 }
 
-/// Today's proverb, with its translation and where it's from.
+/// Today's quote and who said it.
 struct DailyQuote: View {
     var compact = false
     var body: some View {
         let q = Daily.quote
-        VStack(alignment: .leading, spacing: 3) {
-            Text(q.text).font(.system(size: compact ? 12 : 13, weight: .semibold)).lineLimit(3).fixedSize(horizontal: false, vertical: true)
-            if !q.translation.isEmpty { Text(q.translation).font(.system(size: 11)).foregroundStyle(.white.opacity(0.6)).lineLimit(2) }
-            Text("— \(q.origin)").font(.system(size: 10)).foregroundStyle(.white.opacity(0.4))
+        VStack(alignment: .leading, spacing: 4) {
+            Text(q.text).font(.system(size: compact ? 12 : 13, weight: .semibold)).lineLimit(4).fixedSize(horizontal: false, vertical: true)
+            Text("— \(q.author)").font(.system(size: 10)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
         }
     }
 }
 
-/// The proverb with the animation beside it.
+/// The quote with the animation beside it.
 struct DailyCard: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
