@@ -232,20 +232,29 @@ struct ExpandedView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // The strip either side of the camera: tabs on the left, mirror and settings on the right.
-            HStack(spacing: 4) {
-                TabButton(title: "Now", selected: model.tab == .now) { model.tab = .now }
-                TabButton(title: "Today", selected: model.tab == .today) { model.tab = .today }
-                AlertsTabButton(model: model, alerts: model.alerts)
-                if notes.available { TabButton(title: "Notes", selected: model.tab == .notes) { model.tab = .notes } }
-                TabButton(title: shelf.items.isEmpty ? "Shelf" : "Shelf \(shelf.items.count)", selected: model.tab == .shelf) { model.tab = .shelf }
-                Spacer(minLength: model.notchSize.width + 24)
-                Button { mirror.toggle() } label: {
-                    Image(systemName: mirror.showing ? "video.fill" : "video").font(.system(size: 12)).foregroundStyle(.white.opacity(mirror.showing ? 1 : 0.6))
+            // The strip either side of the camera: Now, Today and Alerts on the left; Notes, Shelf, mirror, do not disturb
+            // and settings on the right. Each side gets exactly the space beside the notch, so nothing slides under it.
+            let side = (model.expandedSize.width - model.notchSize.width) / 2 - 32
+            HStack(spacing: 0) {
+                HStack(spacing: 4) {
+                    TabButton(title: "Now", selected: model.tab == .now) { model.tab = .now }
+                    TabButton(title: "Today", selected: model.tab == .today) { model.tab = .today }
+                    AlertsTabButton(model: model, alerts: model.alerts)
                 }
-                .buttonStyle(.plain).help("Camera mirror")
-                QuietButton(alerts: model.alerts).padding(.leading, 6)
-                SettingsMenu(model: model, lyrics: model.lyrics, autoShelf: model.autoShelf, updater: model.updater, alerts: model.alerts).padding(.leading, 8)
+                .frame(width: side, alignment: .leading)
+                Spacer(minLength: 0)
+                HStack(spacing: 4) {
+                    if notes.available { TabButton(title: "Notes", selected: model.tab == .notes) { model.tab = .notes } }
+                    TabButton(title: shelf.items.isEmpty ? "Shelf" : "Shelf \(shelf.items.count)", selected: model.tab == .shelf) { model.tab = .shelf }
+                    Spacer(minLength: 6)
+                    Button { mirror.toggle() } label: {
+                        Image(systemName: mirror.showing ? "video.fill" : "video").font(.system(size: 12)).foregroundStyle(.white.opacity(mirror.showing ? 1 : 0.6))
+                    }
+                    .buttonStyle(.plain).help("Camera mirror")
+                    QuietButton(alerts: model.alerts).padding(.leading, 6)
+                    SettingsMenu(model: model, lyrics: model.lyrics, autoShelf: model.autoShelf, updater: model.updater, alerts: model.alerts).padding(.leading, 8)
+                }
+                .frame(width: side, alignment: .trailing)
             }
             .padding(.horizontal, 20)
             .frame(height: model.notchSize.height)
