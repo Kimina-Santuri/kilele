@@ -5,11 +5,15 @@ import SwiftUI
 
 /// What the notch is showing. Updated on the main thread only.
 final class NotchModel: ObservableObject {
-    enum Tab { case now, today, notes, shelf }
+    enum Tab { case now, today, alerts, notes, shelf }
 
     @Published var expanded = false
     @Published var tab: Tab = .now
     @Published var hud: HUDEvent?
+    /// A new notification dropping down from the collapsed notch for a few seconds.
+    @Published var peek: Alert?
+    /// Set by the controller while the pointer is over the peek, so it stays until you move away.
+    var peekHovered = false
     @Published var notchSize = CGSize(width: 185, height: 32)
     // Small bits of view state live here: SwiftUI's @State needs Xcode's macro plugin, which the command-line tools lack.
     @Published var dropping = false
@@ -38,11 +42,13 @@ final class NotchModel: ObservableObject {
     let autoShelf = AutoShelf()
     let mirror = Mirror()
     let updater = Updater()
+    let alerts = Alerts()
     private var hideHUD: DispatchWorkItem?
+    private var hidePeek: DispatchWorkItem?
 
     /// Wings beside the notch: wider when a notice has text (a device name, a percentage).
     var wingWidth: CGFloat {
-        if pillMode { return 104 }
+        if pillMode { return 112 }
         if let hud, hud.level == nil { return 96 }
         return notchSize.height + 14
     }
@@ -51,10 +57,33 @@ final class NotchModel: ObservableObject {
         CGSize(width: max(720, notchSize.width + 540), height: notchSize.height + 190)
     }
 
-    func visibleSize(playing: Bool) -> CGSize {
-        if expanded { return expandedSize }
+    /// The collapsed notch with its wings, without a peek.
+    func barSize(playing: Bool) -> CGSize {
         let wings = hud != nil || pillMode || (playing && showMusicWings)
         return CGSize(width: notchSize.width + (wings ? 2 * wingWidth : 0), height: notchSize.height)
+    }
+
+    func visibleSize(playing: Bool) -> CGSize {
+        if expanded { return expandedSize }
+        let bar = barSize(playing: playing)
+        if peek != nil { return CGSize(width: max(bar.width, 460), height: notchSize.height + 64) }
+        return bar
+    }
+
+    func showPeek(_ alert: Alert) {
+        guard !expanded else { return }
+        peek = alert
+        schedulePeekHide(after: 6)
+    }
+
+    private func schedulePeekHide(after seconds: Double) {
+        hidePeek?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            if self.peekHovered { self.schedulePeekHide(after: 1.5) } else { self.peek = nil }
+        }
+        hidePeek = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
     }
 
     func flash(_ event: HUDEvent) {
@@ -135,7 +164,7 @@ final class NotchController {
         // Developer aid: `open -a Kilele --args --open today` starts with the notch open on a tab (for screenshots).
         let args = CommandLine.arguments
         if let i = args.firstIndex(of: "--open"), i + 1 < args.count {
-            let tab: NotchModel.Tab = ["now": .now, "today": .today, "notes": .notes, "shelf": .shelf][args[i + 1]] ?? .now
+            let tab: NotchModel.Tab = ["now": .now, "today": .today, "alerts": .alerts, "notes": .notes, "shelf": .shelf][args[i + 1]] ?? .now
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.heldOpen = true; self?.open(tab, focusCapture: false) }
         }
         model.agenda.startIfAllowed()
@@ -156,6 +185,7 @@ final class NotchController {
             m?.shelf.add(url)
             m?.flash(HUDEvent(symbol: "tray.and.arrow.down.fill", text: url.lastPathComponent))
         }
+        m.alerts.onNew = { [weak m] alert in if m?.alerts.peeks == true { m?.showPeek(alert) } }
         m.agenda.onEndingSoon = { [weak m] _ in
             NSSound(named: "Tink")?.play()
             m?.flash(HUDEvent(symbol: "clock.fill", text: "10 min left"))
@@ -211,11 +241,14 @@ final class NotchController {
             // The visible notch (and its wings), with a little slack, up to the very top edge of the screen.
             var visible = rect(for: model.visibleSize(playing: model.nowPlaying.isPlaying)).insetBy(dx: -6, dy: 0)
             visible.size.height += 2
-            // In pill mode only the notch itself opens the panel on hover; the icons either side take clicks instead.
-            var hot = model.pillMode && model.hud == nil ? rect(for: model.notchSize).insetBy(dx: -4, dy: 0) : visible
+            // In pill mode (or with a notification showing) only the notch itself opens the panel on hover; the icons
+            // either side and the notification take clicks instead.
+            let clickable = model.pillMode || model.peek != nil
+            var hot = clickable && model.hud == nil ? rect(for: model.notchSize).insetBy(dx: -4, dy: 0) : visible
             hot.size.height += 2
             if dragging && draggingFiles() { hot = visible }
-            panel.ignoresMouseEvents = !(model.pillMode && visible.contains(point))
+            panel.ignoresMouseEvents = !(clickable && visible.contains(point))
+            model.peekHovered = model.peek != nil && visible.contains(point)
             guard hot.contains(point), !dragging || draggingFiles() else {
                 expandWork?.cancel(); expandWork = nil
                 return
@@ -270,7 +303,8 @@ final class NotchController {
     }
 
     private func setExpanded(_ expanded: Bool, forShelf: Bool = false) {
-        if forShelf { model.tab = .shelf }
+        if forShelf { model.tab = .shelf } else if expanded && model.peek != nil { model.tab = .alerts }
+        model.peek = nil
         model.expanded = expanded
         panel.ignoresMouseEvents = !expanded
         if expanded {

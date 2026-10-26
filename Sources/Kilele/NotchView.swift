@@ -11,7 +11,7 @@ struct NotchRoot: View {
 
     var body: some View {
         let size = model.visibleSize(playing: player.isPlaying)
-        let radius: CGFloat = model.expanded ? 24 : min(10, model.notchSize.height / 3)
+        let radius: CGFloat = model.expanded ? 24 : model.peek != nil ? 18 : min(10, model.notchSize.height / 3)
         let shape = UnevenRoundedRectangle(cornerRadii: .init(topLeading: 0, bottomLeading: radius, bottomTrailing: radius, topTrailing: 0), style: .continuous)
         ZStack(alignment: .top) {
             shape.fill(Color.black)
@@ -21,7 +21,14 @@ struct NotchRoot: View {
                         if model.expanded {
                             ExpandedView(model: model, player: player, shelf: model.shelf, notes: model.notes, mirror: model.mirror)
                         } else {
-                            CollapsedView(model: model, player: player, shelf: model.shelf, notes: model.notes, mic: model.mic, memo: model.memo, autoShelf: model.autoShelf)
+                            VStack(spacing: 0) {
+                                CollapsedView(model: model, player: player, shelf: model.shelf, notes: model.notes, mic: model.mic, memo: model.memo, autoShelf: model.autoShelf, alerts: model.alerts)
+                                    .frame(width: model.barSize(playing: player.isPlaying).width, height: model.notchSize.height)
+                                if let peek = model.peek {
+                                    PeekView(alert: peek, alerts: model.alerts) { model.peek = nil }
+                                        .transition(.opacity)
+                                }
+                            }
                         }
                     }
                     .frame(width: size.width, height: size.height, alignment: .top)
@@ -44,11 +51,13 @@ struct CollapsedView: View {
     @ObservedObject var mic: MicWatcher
     @ObservedObject var memo: VoiceMemo
     @ObservedObject var autoShelf: AutoShelf
+    @ObservedObject var alerts: Alerts
 
     var body: some View {
         if model.hud == nil && model.pillMode {
             HStack(spacing: 0) {
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    if alerts.unread > 0 { PillIcon(symbol: "bell.badge", badge: alerts.unread, help: "Notifications") { model.open(.alerts, false) } }
                     PillIcon(symbol: autoShelf.downloading ? "arrow.down.circle" : "tray", badge: shelf.items.count, help: autoShelf.downloading ? "Downloading… (Shelf)" : "Shelf") { model.open(.shelf, false) }
                     if notes.available { PillIcon(symbol: "square.and.pencil", help: "Quick note (⌃⌥N)") { model.open(.notes, true) } }
                     if memo.recording {
@@ -227,6 +236,7 @@ struct ExpandedView: View {
             HStack(spacing: 4) {
                 TabButton(title: "Now", selected: model.tab == .now) { model.tab = .now }
                 TabButton(title: "Today", selected: model.tab == .today) { model.tab = .today }
+                AlertsTabButton(model: model, alerts: model.alerts)
                 if notes.available { TabButton(title: "Notes", selected: model.tab == .notes) { model.tab = .notes } }
                 TabButton(title: shelf.items.isEmpty ? "Shelf" : "Shelf \(shelf.items.count)", selected: model.tab == .shelf) { model.tab = .shelf }
                 Spacer(minLength: model.notchSize.width + 24)
@@ -234,7 +244,7 @@ struct ExpandedView: View {
                     Image(systemName: mirror.showing ? "video.fill" : "video").font(.system(size: 12)).foregroundStyle(.white.opacity(mirror.showing ? 1 : 0.6))
                 }
                 .buttonStyle(.plain).help("Camera mirror")
-                SettingsMenu(model: model, lyrics: model.lyrics, autoShelf: model.autoShelf, updater: model.updater).padding(.leading, 8)
+                SettingsMenu(model: model, lyrics: model.lyrics, autoShelf: model.autoShelf, updater: model.updater, alerts: model.alerts).padding(.leading, 8)
             }
             .padding(.horizontal, 20)
             .frame(height: model.notchSize.height)
@@ -250,6 +260,7 @@ struct ExpandedView: View {
                     switch model.tab {
                     case .now: NowTab(player: player, lyrics: model.lyrics, outputs: model.outputs, tempo: model.tempo)
                     case .today: TodayTab(agenda: model.agenda, slots: model.slots, focus: model.focus)
+                    case .alerts: AlertsTab(alerts: model.alerts)
                     case .notes: NotesTab(notes: notes, focus: model.focus, memo: model.memo)
                     case .shelf: ShelfTab(shelf: shelf, notes: notes, autoShelf: model.autoShelf, dropping: model.dropping)
                     }
@@ -290,6 +301,7 @@ struct SettingsMenu: View {
     @ObservedObject var lyrics: Lyrics
     @ObservedObject var autoShelf: AutoShelf
     @ObservedObject var updater: Updater
+    @ObservedObject var alerts: Alerts
 
     var body: some View {
         Menu {
@@ -301,6 +313,7 @@ struct SettingsMenu: View {
             Toggle("Show music beside the notch", isOn: $model.showMusicWings).disabled(model.pillMode)
             Toggle("Lyrics (from lrclib.net)", isOn: $lyrics.enabled)
             Toggle("New downloads and screenshots to the shelf", isOn: $autoShelf.enabled)
+            Toggle("Show new notifications from the notch", isOn: $alerts.peeks)
             Divider()
             Text("⌃⌥Space  open or close the notch")
             Text("⌃⌥N  quick note")
@@ -652,6 +665,146 @@ struct CalendarsMenu: View {
             Label("Calendars", systemImage: "calendar").font(.system(size: 10, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Choose which calendars to show")
+    }
+}
+
+// MARK: Alerts tab (other apps' notifications)
+
+/// "Alerts", with the number that came in since you last looked; looking marks them read.
+struct AlertsTabButton: View {
+    @ObservedObject var model: NotchModel
+    @ObservedObject var alerts: Alerts
+    var body: some View {
+        TabButton(title: alerts.unread > 0 ? "Alerts \(alerts.unread)" : "Alerts", selected: model.tab == .alerts) { model.tab = .alerts }
+            .onChange(of: model.tab) { _, tab in if tab == .alerts { alerts.markRead() } }
+            .onAppear { if model.tab == .alerts { alerts.markRead() } }
+    }
+}
+
+struct AlertsTab: View {
+    @ObservedObject var alerts: Alerts
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                Text("NOTIFICATIONS").font(.system(size: 10, weight: .bold)).foregroundStyle(.white.opacity(0.45))
+                Spacer()
+                AlertAppsMenu(alerts: alerts)
+                if !alerts.items.isEmpty {
+                    Button("Clear") { alerts.clearAll() }.buttonStyle(.plain)
+                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
+                }
+            }
+            if !alerts.allowed {
+                Text("Kilele can't see notifications yet").font(.system(size: 13, weight: .semibold))
+                Text("Turn on Kilele under Full Disk Access (it reads the list Notification Center keeps, on this Mac only).")
+                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                Button("Open Privacy & Security") { Alerts.openPrivacySettings() }.buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold)).padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(Capsule().fill(.white.opacity(0.12)))
+            } else if alerts.items.isEmpty {
+                Text("No notifications in the last day.").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 6) {
+                        ForEach(alerts.items) { alert in AlertRow(alert: alert, alerts: alerts) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A notification as a card: app icon, sender or subject, the message, and how long ago. Click to open it.
+struct AlertRow: View {
+    let alert: Alert
+    @ObservedObject var alerts: Alerts
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(nsImage: alerts.icon(alert.app)).resizable().frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(alert.title.isEmpty ? alerts.name(alert.app) : alert.title).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
+                    Spacer(minLength: 2)
+                    Text(Self.ago(alert.date)).font(.system(size: 9.5).monospacedDigit()).foregroundStyle(.white.opacity(0.4))
+                }
+                Text([alert.subtitle, alert.body].filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.7)).lineLimit(2)
+            }
+        }
+        .padding(.horizontal, 9).padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(alert.date > alerts.seenUntil ? 0.13 : 0.07)))
+        .contentShape(Rectangle())
+        .onTapGesture { alerts.open(alert) }
+        .contextMenu {
+            Button("Open") { alerts.open(alert) }
+            Button("Dismiss") { alerts.dismiss(alert) }
+            Divider()
+            Button("Hide \(alerts.name(alert.app)) in Kilele") { alerts.toggleMute(alert.app) }
+        }
+        .help("\(alerts.name(alert.app)) · click to open, right-click to dismiss")
+    }
+
+    /// "now", "4m", "2h", "Mon".
+    static func ago(_ date: Date) -> String {
+        let s = Date().timeIntervalSince(date)
+        if s < 60 { return "now" }
+        if s < 3600 { return "\(Int(s / 60))m" }
+        if s < 86_400 { return "\(Int(s / 3600))h" }
+        let f = DateFormatter(); f.dateFormat = "EEE"; return f.string(from: date)
+    }
+}
+
+/// Which apps show in Kilele, and a shortcut to each app's macOS notification settings (to turn its banners off).
+struct AlertAppsMenu: View {
+    @ObservedObject var alerts: Alerts
+
+    var body: some View {
+        Menu {
+            Section("Show in Kilele") {
+                ForEach(alerts.apps, id: \.self) { app in
+                    Button { alerts.toggleMute(app) } label: {
+                        if alerts.isMuted(app) { Text(alerts.name(app)) } else { Label(alerts.name(app), systemImage: "checkmark") }
+                    }
+                }
+            }
+            Section("Stop macOS banners (Alert style: None)") {
+                ForEach(alerts.apps, id: \.self) { app in
+                    Button("\(alerts.name(app)) settings…") { Alerts.openSystemSettings(for: app) }
+                }
+            }
+        } label: {
+            Label("Apps", systemImage: "app.badge").font(.system(size: 10, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Choose apps, or turn off their macOS banners")
+    }
+}
+
+/// A new notification dropping down from the collapsed notch. Click to open it; it stays while the pointer is on it.
+struct PeekView: View {
+    let alert: Alert
+    @ObservedObject var alerts: Alerts
+    var close: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(nsImage: alerts.icon(alert.app)).resizable().frame(width: 30, height: 30)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(alert.title.isEmpty ? alerts.name(alert.app) : alert.title).font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
+                Text([alert.subtitle, alert.body].filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.75)).lineLimit(2)
+            }
+            Spacer(minLength: 4)
+            Button(action: close) { Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.5)) }
+                .buttonStyle(.plain).help("Hide")
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 18)
+        .frame(height: 60)
+        .contentShape(Rectangle())
+        .onTapGesture { alerts.open(alert); close() }
     }
 }
 
