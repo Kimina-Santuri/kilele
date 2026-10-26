@@ -244,6 +244,7 @@ struct ExpandedView: View {
                     Image(systemName: mirror.showing ? "video.fill" : "video").font(.system(size: 12)).foregroundStyle(.white.opacity(mirror.showing ? 1 : 0.6))
                 }
                 .buttonStyle(.plain).help("Camera mirror")
+                QuietButton(alerts: model.alerts).padding(.leading, 6)
                 SettingsMenu(model: model, lyrics: model.lyrics, autoShelf: model.autoShelf, updater: model.updater, alerts: model.alerts).padding(.leading, 8)
             }
             .padding(.horizontal, 20)
@@ -669,6 +670,20 @@ struct CalendarsMenu: View {
 }
 
 // MARK: Alerts tab (other apps' notifications)
+
+/// Do not disturb: a moon, lit while Kilele's quiet mode or a macOS Focus is on.
+struct QuietButton: View {
+    @ObservedObject var alerts: Alerts
+    var body: some View {
+        Button { alerts.toggleQuiet() } label: {
+            Image(systemName: alerts.silenced ? "moon.fill" : "moon").font(.system(size: 12))
+                .foregroundStyle(alerts.silenced ? Color(red: 0.62, green: 0.55, blue: 1) : .white.opacity(0.6))
+        }
+        .buttonStyle(.plain)
+        .help(alerts.quiet ? "Do not disturb is on: notifications wait in Alerts. Click to turn off."
+              : alerts.systemFocus.map { "\($0) Focus is on in macOS. Click for Kilele's do not disturb too." } ?? "Do not disturb: hold notifications in Alerts")
+    }
+}
 
 /// "Alerts", with the number that came in since you last looked; looking marks them read.
 struct AlertsTabButton: View {

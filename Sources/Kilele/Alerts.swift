@@ -19,7 +19,8 @@ struct Alert: Identifiable, Equatable {
 ///
 /// Replacing macOS's banners (with Accessibility allowed): each new banner Notification Center puts up is read and
 /// closed through Accessibility, and shown from the notch instead, at once (the database is written a few seconds
-/// later). Closing a banner leaves the notification in Notification Center. Only banners whose notification wasn't
+/// later). Closing a banner that early clears it from Notification Center, so Kilele keeps its own copy. Only banners
+/// whose notification wasn't
 /// already in the record are touched, so the list in Notification Center itself is never closed, and muted apps keep
 /// their macOS banners.
 final class Alerts: ObservableObject {
@@ -40,6 +41,14 @@ final class Alerts: ObservableObject {
         didSet { UserDefaults.standard.set(replaceBanners, forKey: "replaceBanners"); if replaceBanners { askForAccessibility() } }
     }
     @Published private(set) var accessibility = AXIsProcessTrusted()
+    /// Do not disturb (the moon by the camera button): no drop-downs, and macOS's banners are closed without showing,
+    /// for every app. Notifications still collect in the Alerts tab. If shortcuts named "Kilele DND On" and
+    /// "Kilele DND Off" exist (each a Shortcuts "Set Focus" action), they're run too, so macOS's own Do Not Disturb
+    /// (which also silences sounds and follows to the iPhone) switches with it.
+    @Published private(set) var quiet = UserDefaults.standard.bool(forKey: "quiet")
+    /// The macOS Focus that's on, if any (from ~/Library/DoNotDisturb, readable with Full Disk Access).
+    @Published private(set) var systemFocus: String?
+    var silenced: Bool { quiet || systemFocus != nil }
     var onNew: (Alert) -> Void = { _ in }
 
     private static let folder = NSHomeDirectory() + "/Library/Group Containers/group.com.apple.usernoted/db2/"
@@ -52,6 +61,13 @@ final class Alerts: ObservableObject {
     private var icons: [String: NSImage] = [:]
     /// Notifications already shown from a banner, so the database read doesn't show them a second time.
     private var peeked: Set<Data> = []
+    /// Kilele's own copy of notifications whose banner it closed: closing a banner that early clears it from
+    /// Notification Center, so it never reaches the record. Kept 24 hours.
+    private var kept: [Alert] = (UserDefaults.standard.array(forKey: "keptAlerts") as? [[String: Any]] ?? []).compactMap { d in
+        guard let id = d["id"] as? Data, let app = d["app"] as? String, let when = d["date"] as? Double else { return nil }
+        return Alert(id: id, app: app, title: d["title"] as? String ?? "", subtitle: d["subtitle"] as? String ?? "",
+                     body: d["body"] as? String ?? "", date: Date(timeIntervalSince1970: when), link: nil)
+    }
     private let banners = BannerCatcher()
 
     init() {
@@ -68,12 +84,14 @@ final class Alerts: ObservableObject {
 
     /// A new banner: show it from the notch and close macOS's (true), or leave it.
     private func caught(_ banner: BannerCatcher.Banner) -> Bool {
-        guard replaceBanners, let known, !known.contains(banner.id), !peeked.contains(banner.id) else { return false }
+        guard replaceBanners || quiet, let known, !known.contains(banner.id), !peeked.contains(banner.id) else { return false }
         let app = NSWorkspace.shared.runningApplications.first { $0.localizedName == banner.appName }?.bundleIdentifier
             ?? apps.first { name($0) == banner.appName } ?? banner.appName
-        guard !isMuted(app) else { return false }
+        guard quiet || !isMuted(app) else { return false }
+        let alert = Alert(id: banner.id, app: app, title: banner.title, subtitle: banner.subtitle, body: banner.body, date: Date(), link: nil)
         peeked.insert(banner.id)
-        onNew(Alert(id: banner.id, app: app, title: banner.title, subtitle: banner.subtitle, body: banner.body, date: Date(), link: nil))
+        keep(alert)
+        if !quiet { onNew(alert) } // in do not disturb: close it, show nothing
         return true
     }
 
@@ -85,6 +103,8 @@ final class Alerts: ObservableObject {
                 let a = try? fm.attributesOfItem(atPath: Self.folder + name)
                 return "\((a?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)/\(a?[.size] as? Int ?? 0)"
             }.joined(separator: "|")
+            let focus = Self.readFocus()
+            DispatchQueue.main.async { if self.systemFocus != focus { self.systemFocus = focus } }
             guard stamp != self.stamp else { return }
             let found = Self.read()
             if found != nil { self.stamp = stamp } // keep retrying while access is off
@@ -99,19 +119,65 @@ final class Alerts: ObservableObject {
         let fresh = known.map { k in found.filter { !k.contains($0.id) } } ?? []
         known = Set(found.map(\.id))
         all = found
-        dismissed.formIntersection(known ?? [])
+        dismissed.formIntersection((known ?? []).union(kept.map(\.id)))
         publish()
         // Several at once (a burst, or the Mac waking): show the newest.
-        if let newest = fresh.filter({ !peeked.contains($0.id) && !isMuted($0.app) && $0.date > Date().addingTimeInterval(-120) && $0.app != Bundle.main.bundleIdentifier }).max(by: { $0.date < $1.date }) {
+        if !silenced, let newest = fresh.filter({ !peeked.contains($0.id) && !isMuted($0.app) && $0.date > Date().addingTimeInterval(-120) && $0.app != Bundle.main.bundleIdentifier }).max(by: { $0.date < $1.date }) {
             onNew(newest)
         }
     }
 
+    private func keep(_ alert: Alert) {
+        let day = Date().addingTimeInterval(-86_400)
+        kept = kept.filter { $0.date > day } + [alert]
+        UserDefaults.standard.set(kept.map { ["id": $0.id, "app": $0.app, "title": $0.title, "subtitle": $0.subtitle, "body": $0.body,
+                                              "date": $0.date.timeIntervalSince1970] as [String: Any] }, forKey: "keptAlerts")
+        publish()
+    }
+
     private func publish() {
         let day = Date().addingTimeInterval(-86_400), week = Date().addingTimeInterval(-7 * 86_400)
-        items = all.filter { $0.date > day && !isMuted($0.app) && !dismissed.contains($0.id) && $0.app != Bundle.main.bundleIdentifier }
+        let recorded = Set(all.map(\.id))
+        items = (all + kept.filter { !recorded.contains($0.id) }).filter { $0.date > day && !isMuted($0.app) && !dismissed.contains($0.id) && $0.app != Bundle.main.bundleIdentifier }
             .sorted { $0.date > $1.date }
         apps = Array(Set(all.filter { $0.date > week }.map(\.app))).sorted { name($0) < name($1) }
+    }
+
+    func toggleQuiet() {
+        quiet.toggle()
+        UserDefaults.standard.set(quiet, forKey: "quiet")
+        let name = quiet ? "Kilele DND On" : "Kilele DND Off"
+        DispatchQueue.global().async {
+            let list = Self.run("/usr/bin/shortcuts", ["list"])
+            if list.components(separatedBy: "\n").contains(name) { _ = Self.run("/usr/bin/shortcuts", ["run", name]) }
+        }
+    }
+
+    private static func run(_ tool: String, _ args: [String]) -> String {
+        let p = Process(), pipe = Pipe()
+        p.executableURL = URL(fileURLWithPath: tool)
+        p.arguments = args
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return "" }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    /// The active Focus's name: Assertions.json lists active assertions with a mode identifier, named in
+    /// ModeConfigurations.json.
+    private static func readFocus() -> String? {
+        let dir = NSHomeDirectory() + "/Library/DoNotDisturb/DB/"
+        func json(_ name: String) -> [String: Any]? {
+            guard let data = FileManager.default.contents(atPath: dir + name),
+                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+            return (root["data"] as? [[String: Any]])?.first
+        }
+        guard let records = json("Assertions.json")?["storeAssertionRecords"] as? [[String: Any]], let first = records.first else { return nil }
+        let mode = (first["assertionDetails"] as? [String: Any])?["assertionDetailsModeIdentifier"] as? String ?? ""
+        let configs = json("ModeConfigurations.json")?["modeConfigurations"] as? [String: Any]
+        return ((configs?[mode] as? [String: Any])?["mode"] as? [String: Any])?["name"] as? String ?? "Focus"
     }
 
     func isMuted(_ app: String) -> Bool { muted.contains(app.lowercased()) }
