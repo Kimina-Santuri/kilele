@@ -97,3 +97,9 @@ Tabs are now **Now** (music), **Today** (calendar, countdown, studio), **Notes**
 - `systemFocus`: the active Focus's name from `~/Library/DoNotDisturb/DB/Assertions.json` (`storeAssertionRecords[0].assertionDetails.assertionDetailsModeIdentifier`, named via ModeConfigurations.json), read every 2 s with the notification poll (needs Full Disk Access). The moon is lit, and peeks are held, while either is on. The Assertions format with an active Focus wasn't observed (none was on); it's parsed defensively.
 - Tested with the harness (`quiet` set in its defaults): the test banner was closed with no peek.
 - **Tab strip (2026-10-26):** with five tabs the left side overflowed and "Shelf" slid under the physical notch. The strip is now two fixed-width halves, each `(expanded width − notch) / 2 − 32`: Now, Today, Alerts on the left; Notes, Shelf, then mirror, moon and gear on the right. Checked by screenshot.
+
+## Daily proverb and ASCII animation (2026-10-26)
+
+- `Daily.swift`: 41 traditional proverbs (mostly Swahili with English translations, plus other African proverbs; traditional sayings, so free to use, bundled, no network) and 10 procedural ASCII animations (rain, waves, stars, vinyl, levels, sunrise, bounce, fire, dancer, code), each a function of time giving 5 lines of 24 characters. Both are picked from the day count since 1970 (animation index `(day * 7 + 3) % 10`, so pairs vary), so they change at midnight; the random-looking parts are a hash seeded by the day too. `DailyAnimation` runs at 8 fps in a monospaced 10 pt font.
+- Shown as `DailyCard` (proverb with the animation beside it) in the Now tab's right pane whenever there are no lyrics to follow: nothing playing, no synced lyrics, or lyrics turned off.
+- Checked by rendering frames as text (every frame 24×5) and a screenshot cropped to the notch. **Screenshot only the notch area** (e.g. `screencapture -R` inside the panel): full-screen captures pick up whatever the user has open.

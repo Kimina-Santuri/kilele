@@ -454,7 +454,7 @@ struct LyricsView: View {
 
     var body: some View {
         if !lyrics.enabled {
-            Text("Lyrics are off (gear menu).").font(.system(size: 11)).foregroundStyle(.white.opacity(0.4))
+            DailyCard()
         } else if !lyrics.lines.isEmpty {
             TimelineView(.periodic(from: .now, by: 0.25)) { context in
                 let line = lyrics.current(at: player.position(at: context.date))
@@ -466,10 +466,9 @@ struct LyricsView: View {
             }
         } else if lyrics.searching {
             Text("Looking for lyrics…").font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
-        } else if player.hasMedia {
-            Text("No synced lyrics for this one.").font(.system(size: 11)).foregroundStyle(.white.opacity(0.4))
         } else {
-            Text("Lyrics follow the song here while music plays.").font(.system(size: 11)).foregroundStyle(.white.opacity(0.4))
+            // No lyrics to follow: the proverb and animation of the day instead.
+            DailyCard()
         }
     }
 }
