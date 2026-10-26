@@ -520,40 +520,138 @@ struct AgendaView: View {
             if !agenda.calendarAllowed {
                 Text("Calendar access is off").font(.system(size: 13, weight: .semibold))
                 Text("Turn it on in System Settings › Privacy & Security › Calendars.").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
-            } else if agenda.events.isEmpty && agenda.reminders.isEmpty {
-                Text("Nothing else today").font(.system(size: 13, weight: .semibold))
-                Text("Your next events and today's reminders show here.").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
             } else {
-                ForEach(agenda.events, id: \.self) { event in
-                    HStack(spacing: 8) {
-                        Circle().fill(Color(cgColor: event.calendar.cgColor)).frame(width: 6, height: 6)
-                        Text(when(event)).font(.system(size: 11).monospacedDigit()).foregroundStyle(.white.opacity(0.55)).frame(width: 64, alignment: .leading)
-                        Text(event.title ?? "Event").font(.system(size: 12)).lineLimit(1)
-                        Spacer(minLength: 4)
-                        if !event.isAllDay {
-                            let pinned = agenda.pinned == event
-                            Button { agenda.pin(pinned ? nil : event) } label: {
-                                Image(systemName: pinned ? "pin.fill" : "pin").font(.system(size: 10)).foregroundStyle(.white.opacity(pinned ? 0.9 : 0.35))
-                            }
-                            .buttonStyle(.plain).help(pinned ? "Stop counting down" : "Count down to this")
-                        }
-                    }
+                HStack {
+                    Text("COMING UP").font(.system(size: 10, weight: .bold)).foregroundStyle(.white.opacity(0.45))
+                    Spacer()
+                    CalendarsMenu(agenda: agenda)
                 }
-                ForEach(agenda.reminders, id: \.self) { reminder in
-                    HStack(spacing: 8) {
-                        Button { agenda.complete(reminder) } label: { Image(systemName: "circle").font(.system(size: 11)) }.buttonStyle(.plain)
-                        Text(reminder.title ?? "Reminder").font(.system(size: 12)).lineLimit(1)
+                DayTimeline(agenda: agenda).frame(height: 30)
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if agenda.events.isEmpty && agenda.reminders.isEmpty {
+                            Text("Nothing in the next week on the calendars you've chosen.").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                        }
+                        ForEach(agenda.events, id: \.self) { event in
+                            EventPill(event: event, pinned: agenda.pinned == event) { agenda.pin(agenda.pinned == event ? nil : event) }
+                        }
+                        ForEach(agenda.reminders, id: \.self) { reminder in
+                            HStack(spacing: 6) {
+                                Button { agenda.complete(reminder) } label: { Image(systemName: "circle").font(.system(size: 10)) }.buttonStyle(.plain).help("Tick off")
+                                Text(reminder.title ?? "Reminder").font(.system(size: 11.5)).lineLimit(1)
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 4)
+                            .background(Capsule().fill(.white.opacity(0.07)))
+                        }
                     }
                 }
             }
         }
     }
+}
 
-    private func when(_ event: EKEvent) -> String {
-        if event.isAllDay { return "All day" }
+/// An event as a capsule in its calendar's colour: time, title, and a pin to count down to it.
+struct EventPill: View {
+    let event: EKEvent
+    let pinned: Bool
+    let pin: () -> Void
+
+    var body: some View {
+        let color = Color(cgColor: event.calendar.cgColor)
+        let now = !event.isAllDay && event.startDate <= Date() && event.endDate > Date()
+        HStack(spacing: 7) {
+            Text(now ? "NOW" : Self.when(event)).font(.system(size: 10, weight: .bold).monospacedDigit()).foregroundStyle(.white.opacity(0.85))
+            Text(event.title ?? "Event").font(.system(size: 11.5, weight: now ? .semibold : .regular)).lineLimit(1)
+            Spacer(minLength: 4)
+            if !event.isAllDay {
+                Button(action: pin) {
+                    Image(systemName: pinned ? "pin.fill" : "pin").font(.system(size: 9)).foregroundStyle(.white.opacity(pinned ? 0.95 : 0.35))
+                }
+                .buttonStyle(.plain).help(pinned ? "Stop counting down" : "Count down to this")
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 4)
+        .background(Capsule().fill(color.opacity(now ? 0.45 : 0.22)))
+        .overlay(Capsule().strokeBorder(color.opacity(0.6), lineWidth: 1))
+        .help("\(event.title ?? "Event") · \(event.calendar.title)")
+    }
+
+    static func when(_ event: EKEvent) -> String {
         let f = DateFormatter()
-        f.dateFormat = Calendar.current.isDateInToday(event.startDate) ? "HH:mm" : "EEE HH:mm"
-        return f.string(from: event.startDate)
+        let calendar = Calendar.current
+        if event.isAllDay { return calendar.isDateInToday(event.startDate) ? "TODAY" : (calendar.isDateInTomorrow(event.startDate) ? "TMRW" : { f.dateFormat = "EEE"; return f.string(from: event.startDate).uppercased() }()) }
+        if calendar.isDateInToday(event.startDate) { f.dateFormat = "HH:mm" }
+        else if calendar.isDateInTomorrow(event.startDate) { f.dateFormat = "'TMRW' HH:mm" }
+        else { f.dateFormat = "EEE HH:mm" }
+        return f.string(from: event.startDate).uppercased()
+    }
+}
+
+/// The next 12 hours (from an hour ago): events as coloured pills on a track, with a marker for now.
+struct DayTimeline: View {
+    @ObservedObject var agenda: Agenda
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let start = context.date.addingTimeInterval(-3600), span: TimeInterval = 12 * 3600
+            GeometryReader { g in
+                let w = g.size.width
+                let x = { (d: Date) in CGFloat(min(span, max(0, d.timeIntervalSince(start))) / span) * w }
+                ZStack(alignment: .topLeading) {
+                    Capsule().fill(.white.opacity(0.08)).frame(width: w, height: 12).offset(y: 4)
+                    ForEach(agenda.upcoming.filter { $0.endDate > start && $0.startDate < start.addingTimeInterval(span) }, id: \.self) { event in
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color(cgColor: event.calendar.cgColor).opacity(0.9))
+                            .frame(width: max(6, x(event.endDate) - x(event.startDate)), height: 12)
+                            .offset(x: x(event.startDate), y: 4)
+                            .help("\(EventPill.when(event)) \(event.title ?? "")")
+                    }
+                    ForEach(Self.hours(from: start, span: span), id: \.self) { hour in
+                        Text(Self.label(hour)).font(.system(size: 8, weight: .medium).monospacedDigit()).foregroundStyle(.white.opacity(0.4))
+                            .position(x: x(hour), y: 24)
+                    }
+                    Rectangle().fill(Color.orange).frame(width: 1.5, height: 18).offset(x: x(context.date), y: 1)
+                }
+            }
+        }
+    }
+
+    /// Every third full hour in the window.
+    static func hours(from start: Date, span: TimeInterval) -> [Date] {
+        let calendar = Calendar.current
+        guard var hour = calendar.nextDate(after: start, matching: DateComponents(minute: 0), matchingPolicy: .nextTime) else { return [] }
+        var out: [Date] = []
+        while hour < start.addingTimeInterval(span - 1800) {
+            if calendar.component(.hour, from: hour) % 3 == 0 { out.append(hour) }
+            hour = hour.addingTimeInterval(3600)
+        }
+        return out
+    }
+
+    static func label(_ d: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "HH"; return f.string(from: d)
+    }
+}
+
+/// Choose which calendars Kilele uses, grouped by account (Google, iCloud, …).
+struct CalendarsMenu: View {
+    @ObservedObject var agenda: Agenda
+
+    var body: some View {
+        Menu {
+            ForEach(Array(Set(agenda.calendars.map(Agenda.account))).sorted(), id: \.self) { account in
+                Section(account) {
+                    ForEach(agenda.calendars.filter { Agenda.account($0) == account }, id: \.calendarIdentifier) { calendar in
+                        Button { agenda.toggle(calendar) } label: {
+                            if agenda.isShown(calendar) { Label(calendar.title, systemImage: "checkmark") } else { Text(calendar.title) }
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label("Calendars", systemImage: "calendar").font(.system(size: 10, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Choose which calendars to show")
     }
 }
 

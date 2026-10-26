@@ -72,3 +72,10 @@ Tabs are now **Now** (music), **Today** (calendar, countdown, studio), **Notes**
 - New Info.plist usage strings: microphone, camera, Downloads, Desktop. Version 0.2.0 (build 2).
 - Tested with a compiled harness: LRC parsing; real LRCLIB lookups (exact and YouTube-style titles); live studio slots; journal capture and focus logging into a copy of the notes (Log section, via `tsuzuri today -n`); tap tempo; span formatting; version comparison. Installed and checked: window drawn, main thread idle, pill showing playback bars and the countdown.
 
+## Calendar pills and chooser (2026-10-26)
+
+- The user asked for events as pills, and thought Kilele read Apple Calendar rather than Google. Checked: the Mac's Calendar app already has the Google calendars (kimina@santuri.org, djpractice@santuri.org, Santuri Studio, Workstations, ZAHABU Events, SEMA Classroom Studio) and Kilele was reading them; what the user wanted was to hide clutter and choose calendars.
+- `Agenda`: `calendars` (all event calendars, sorted by account/source title then name), `hidden` (calendar identifiers in UserDefaults `hiddenCalendars`; on first run Birthdays, Siri Suggestions and Scheduled Reminders are hidden), `toggle(_:)`, `isShown(_:)`. Events now come from the shown calendars only, looking 7 days ahead (all-day events only if they start today). The list shows up to 6; `upcoming` (timed) feeds the countdown, session timer and pill.
+- Today tab, left: "COMING UP" with a **Calendars** menu (sections per account, checkmarks), a **DayTimeline** (the last hour plus the next 11 as a track, events as calendar-coloured bars, an orange now marker, hour labels every 3 h), and **EventPill**s (capsule in calendar colour; NOW/time/TMRW/weekday label; pin to count down; brighter while it's on). Reminders are grey pills with a tick-off circle.
+- Developer aid: launching with `--open <now|today|notes|shelf>` opens the notch on that tab after 1.5 s and holds it open (`open -a /Applications/Kilele.app --args --open today`), so screenshots can be taken without hovering. Checked this way with the user's real calendars.
+

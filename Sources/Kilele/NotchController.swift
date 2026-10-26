@@ -132,6 +132,12 @@ final class NotchController {
         poll = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in self?.track(.mouseMoved) }
         model.open = { [weak self] tab, focusCapture in self?.open(tab, focusCapture: focusCapture) }
         wire()
+        // Developer aid: `open -a Kilele --args --open today` starts with the notch open on a tab (for screenshots).
+        let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--open"), i + 1 < args.count {
+            let tab: NotchModel.Tab = ["now": .now, "today": .today, "notes": .notes, "shelf": .shelf][args[i + 1]] ?? .now
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.heldOpen = true; self?.open(tab, focusCapture: false) }
+        }
         model.agenda.startIfAllowed()
         Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.model.agenda.reload() }
 
