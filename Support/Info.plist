@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>ke.co.kimina.kilele</string>
+	<key>CFBundleName</key>
+	<string>Kilele</string>
+	<key>CFBundleDisplayName</key>
+	<string>Kilele</string>
+	<key>CFBundleExecutable</key>
+	<string>Kilele</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Kilele shows what's playing in Music or Spotify and lets you pause or skip from the notch.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Kilele shows your next events when you hover over the notch.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Kilele shows reminders due today and lets you tick them off from the notch.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Kilele shows a short notice in the notch when headphones or other Bluetooth devices connect.</string>
+</dict>
+</plist>
