@@ -250,7 +250,7 @@ struct DailyBackdrop: View {
             TimelineView(.animation(minimumInterval: 1 / 8)) { context in
                 Text(Daily.animation.frame(context.date.timeIntervalSinceReferenceDate, cols, rows).joined(separator: "\n"))
                     .font(Font(Self.font))
-                    .foregroundStyle(.white.opacity(0.07))
+                    .foregroundStyle(.white.opacity(0.045))
                     .fixedSize()
                     .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
             }
