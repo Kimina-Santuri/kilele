@@ -109,3 +109,7 @@ Tabs are now **Now** (music), **Today** (calendar, countdown, studio), **Notes**
 
 - `NotchModel.seeThrough` (UserDefaults `seeThrough`, default on; gear menu "See-through when open"). Open, or while a notification peek shows, `NotchBackground` is an `NSVisualEffectView` (`.hudWindow`, behind-window, always active, dark appearance) under 30% black, with a darker band the height of the notch (the tab strip: a further 45% black, still see-through, at the user's request) fading into the glass over 16 pt. The collapsed pill (and wings) uses the same glass without the black band, at the user's request; the physical notch hides the middle. The gear toggle is "See-through (frosted glass)" and covers both.
 - **Verified in the installed app (2026-10-26):** after the user turned on Accessibility, a test `display notification` dropped down from the notch as a frosted peek (icon, title, body, ×) and no macOS banner was left open (0 `AXNotificationCenterBanner` elements under 1.5 s later).
+
+## 0.3.0 release (2026-10-26)
+
+- Released with `scripts/release.sh 0.3.0` (run by Claude at the user's request). The installed copy (built as 0.2.0) updated itself through gear › Check for updates › Update: download, signature check, swap and relaunch all worked, the first real run of the updater's install path.
