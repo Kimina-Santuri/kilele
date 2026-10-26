@@ -23,6 +23,11 @@ final class Notes: ObservableObject {
     @Published private(set) var inProgress: [Card] = []
     @Published private(set) var status = ""
     @Published var draft = ""
+    /// Where captures, voice memos and shelf files go: Inbox, or the Log section of today's journal note.
+    enum Target: String { case inbox, journal }
+    @Published var target = Target(rawValue: UserDefaults.standard.string(forKey: "captureTarget") ?? "") ?? .inbox {
+        didSet { UserDefaults.standard.set(target.rawValue, forKey: "captureTarget") }
+    }
 
     // KILELE_NOTES points Kilele at another folder (used to test against a copy of the notes).
     let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["KILELE_NOTES"] ?? NSHomeDirectory() + "/Documents/notes")
@@ -138,11 +143,27 @@ final class Notes: ObservableObject {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         draft = ""
-        addToInbox("- " + text.replacingOccurrences(of: "\n", with: " "), done: "Added to Inbox")
+        add("- " + text.replacingOccurrences(of: "\n", with: " "))
     }
 
-    /// Copies a shelf file into notes/assets (as Tsuzuri's attach does) and links it from Inbox.
-    func attach(_ file: URL) {
+    /// A finished focus session, in today's journal Log: "- 14:00–14:25 · 25 min focus: label".
+    func logFocus(start: Date, end: Date, label: String) {
+        let clock = DateFormatter()
+        clock.dateFormat = "HH:mm"
+        let minutes = max(1, Int((end.timeIntervalSince(start) / 60).rounded()))
+        addToJournal("- \(clock.string(from: start))–\(clock.string(from: end)) · \(minutes) min focus" + (label.isEmpty ? "" : ": \(label)"), done: "Focus session logged in today's journal")
+    }
+
+    private func add(_ item: String, file: String? = nil) {
+        switch target {
+        case .inbox: addToInbox(item, done: file.map { "Added \($0) to your notes (linked in Inbox)" } ?? "Added to Inbox")
+        case .journal: addToJournal(item, done: file.map { "Added \($0) to your notes (linked in today's journal)" } ?? "Added to today's journal")
+        }
+    }
+
+    /// Copies a file into notes/assets (as Tsuzuri's attach does) and links it from Inbox or today's journal.
+    /// `moving` removes the original afterwards (voice memos recorded to a temporary file).
+    func attach(_ file: URL, moving: Bool = false) {
         io.async { [weak self] in
             guard let self else { return }
             let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
@@ -157,6 +178,7 @@ final class Notes: ObservableObject {
                 try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
                 try FileManager.default.copyItem(at: file, to: target)
             } catch { self.report("Couldn't copy \(file.lastPathComponent) into your notes."); return }
+            if moving { try? FileManager.default.removeItem(at: file) }
             var link = "assets/" + target.lastPathComponent
             if link.rangeOfCharacter(from: CharacterSet(charactersIn: " ()")) != nil { link = "<\(link)>" }
             let kind = ext.lowercased()
@@ -165,7 +187,7 @@ final class Notes: ObservableObject {
             else if ["mp4", "mov", "webm", "mkv", "avi", "m4v"].contains(kind) { line = "[▶ \(stem)](\(link))" }
             else if ["mp3", "wav", "m4a", "ogg", "flac", "aac"].contains(kind) { line = "[♪ \(stem)](\(link))" }
             else { line = "[📎 \(target.lastPathComponent)](\(link))" }
-            self.addToInbox("- " + line, done: "Added \(target.lastPathComponent) to your notes (linked in Inbox)")
+            DispatchQueue.main.async { self.add("- " + line, file: target.lastPathComponent) }
         }
     }
 
@@ -182,6 +204,54 @@ final class Notes: ObservableObject {
                 lines += ["", item, ""]
             }
             self.write(lines.joined(separator: "\n"), to: self.inbox, done: done)
+        }
+    }
+
+    /// Today's journal note, created the way Tsuzuri creates it (`tsuzuri today -n`: template, carried-over to-dos,
+    /// link from Journal.md). If Tsuzuri isn't there, a plain note with a Log section.
+    private func todaysJournal() -> URL? {
+        let day = DateFormatter()
+        day.dateFormat = "yyyy-MM-dd"
+        let url = root.appendingPathComponent("Journal/\(day.string(from: Date())).md")
+        if FileManager.default.fileExists(atPath: url.path) { return url }
+        let tsuzuri = NSHomeDirectory() + "/bin/tsuzuri"
+        if FileManager.default.isExecutableFile(atPath: tsuzuri) {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: tsuzuri)
+            p.arguments = ["today", "-n"]
+            var env = ProcessInfo.processInfo.environment
+            env["TSUZURI_WORKSPACE"] = root.path
+            env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:\(NSHomeDirectory())/bin:/usr/bin:/bin"
+            p.environment = env
+            p.standardOutput = FileHandle.nullDevice
+            p.standardError = FileHandle.nullDevice
+            if (try? p.run()) != nil { p.waitUntilExit() }
+        }
+        if !FileManager.default.fileExists(atPath: url.path) {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? "# \(day.string(from: Date()))\n\nPart of [[Journal]]\n\n## Log\n- \n".write(to: url, atomically: true, encoding: .utf8)
+        }
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Into the "## Log" section of today's journal: fills its empty "- " bullet, otherwise goes after its last item.
+    private func addToJournal(_ item: String, done: String) {
+        io.async { [weak self] in
+            guard let self else { return }
+            guard let url = self.todaysJournal(), let text = try? String(contentsOf: url, encoding: .utf8) else { self.report("Couldn't open today's journal note."); return }
+            var lines = text.components(separatedBy: "\n")
+            if let log = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces).lowercased() == "## log" }) {
+                let end = lines[(log + 1)...].firstIndex(where: { $0.hasPrefix("#") }) ?? lines.count
+                if let last = lines[(log + 1)..<end].lastIndex(where: { $0.hasPrefix("- ") || $0 == "-" }) {
+                    if lines[last].trimmingCharacters(in: .whitespaces) == "-" { lines[last] = item } else { lines.insert(item, at: last + 1) }
+                } else {
+                    lines.insert(item, at: log + 1)
+                }
+            } else {
+                while lines.last == "" { lines.removeLast() }
+                lines += ["", "## Log", item, ""]
+            }
+            self.write(lines.joined(separator: "\n"), to: url, done: done)
         }
     }
 

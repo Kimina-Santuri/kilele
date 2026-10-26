@@ -13,9 +13,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>0.2.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>2</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
@@ -28,6 +28,14 @@
 	<string>Kilele shows your next events when you hover over the notch.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>Kilele shows reminders due today and lets you tick them off from the notch.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Kilele records voice memos into your notes when you press the record button.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Kilele shows a camera mirror in the notch when you open it, for a quick look before a call.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Kilele puts new downloads on the shelf and shows when a download is in progress.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Kilele puts new screenshots on the shelf.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Kilele shows a short notice in the notch when headphones or other Bluetooth devices connect.</string>
 </dict>

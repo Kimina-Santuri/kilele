@@ -1,10 +1,11 @@
 import AppKit
+import Carbon.HIToolbox
 import ServiceManagement
 import SwiftUI
 
 /// What the notch is showing. Updated on the main thread only.
 final class NotchModel: ObservableObject {
-    enum Tab { case now, notes, shelf }
+    enum Tab { case now, today, notes, shelf }
 
     @Published var expanded = false
     @Published var tab: Tab = .now
@@ -27,17 +28,27 @@ final class NotchModel: ObservableObject {
     let shelf = Shelf()
     let agenda = Agenda()
     let notes = Notes()
+    let outputs = AudioOutputs()
+    let mic = MicWatcher()
+    let tempo = TapTempo()
+    let lyrics = Lyrics()
+    let slots = StudioSlots()
+    let focus = FocusTimer()
+    let memo = VoiceMemo()
+    let autoShelf = AutoShelf()
+    let mirror = Mirror()
+    let updater = Updater()
     private var hideHUD: DispatchWorkItem?
 
     /// Wings beside the notch: wider when a notice has text (a device name, a percentage).
     var wingWidth: CGFloat {
+        if pillMode { return 104 }
         if let hud, hud.level == nil { return 96 }
-        if pillMode { return 84 }
         return notchSize.height + 14
     }
 
     var expandedSize: CGSize {
-        CGSize(width: max(720, notchSize.width + 540), height: notchSize.height + 170)
+        CGSize(width: max(720, notchSize.width + 540), height: notchSize.height + 190)
     }
 
     func visibleSize(playing: Bool) -> CGSize {
@@ -91,6 +102,10 @@ final class NotchController {
     private var power: PowerWatcher?
     private var bluetooth: BluetoothWatcher?
     private var poll: Timer?
+    private let hotKeys = HotKeys()
+    /// Opened from the keyboard (or a shortcut) with the pointer elsewhere: stay open until the pointer has been in
+    /// and left again, Esc is pressed, or the shortcut is pressed again.
+    private var heldOpen = false
 
     init() {
         let host = FirstClickHostingView(rootView: NotchRoot(model: model, player: model.nowPlaying))
@@ -116,12 +131,45 @@ final class NotchController {
         // Mouse-moved events don't always reach a panel that isn't key, so also check the pointer ten times a second.
         poll = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in self?.track(.mouseMoved) }
         model.open = { [weak self] tab, focusCapture in self?.open(tab, focusCapture: focusCapture) }
+        wire()
         model.agenda.startIfAllowed()
         Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.model.agenda.reload() }
 
         volume = VolumeWatcher { [weak self] level, muted in self?.model.flash(.volume(level, muted: muted)) }
         power = PowerWatcher { [weak self] percent, onAC in self?.model.flash(.battery(percent, onAC: onAC)) }
         bluetooth = BluetoothWatcher { [weak self] name, connected in self?.model.flash(.bluetooth(name, connected: connected)) }
+    }
+
+    private func wire() {
+        let m = model
+        m.nowPlaying.onTrackChange = { [weak m] title, artist, duration in m?.lyrics.load(title: title, artist: artist, duration: duration) }
+        m.focus.onLog = { [weak m] start, end, label in m?.notes.logFocus(start: start, end: end, label: label) }
+        m.focus.onFinish = { [weak m] label in m?.flash(HUDEvent(symbol: "checkmark.circle.fill", text: label.isEmpty ? "Focus done" : "Done: \(label)")) }
+        m.memo.onFinished = { [weak m] url in m?.notes.attach(url, moving: true) }
+        m.autoShelf.onNewFile = { [weak m] url in
+            m?.shelf.add(url)
+            m?.flash(HUDEvent(symbol: "tray.and.arrow.down.fill", text: url.lastPathComponent))
+        }
+        m.agenda.onEndingSoon = { [weak m] _ in
+            NSSound(named: "Tink")?.play()
+            m?.flash(HUDEvent(symbol: "clock.fill", text: "10 min left"))
+        }
+        // ⌃⌥Space opens or closes the notch; ⌃⌥N opens quick capture.
+        hotKeys.register(key: kVK_Space, modifiers: controlKey | optionKey) { [weak self] in
+            guard let self else { return }
+            if self.model.expanded { self.heldOpen = false; self.setExpanded(false) } else { self.heldOpen = true; self.open(self.model.tab == .shelf ? .now : self.model.tab, focusCapture: false) }
+        }
+        hotKeys.register(key: kVK_ANSI_N, modifiers: controlKey | optionKey) { [weak self] in
+            self?.heldOpen = true
+            self?.open(.notes, focusCapture: true)
+        }
+        // Esc closes the notch while it's open.
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.model.expanded, event.keyCode == UInt16(kVK_Escape) else { return event }
+            self.heldOpen = false
+            self.setExpanded(false)
+            return nil
+        }
     }
 
     /// The screen with a notch, or the main screen (where Kilele sits in the middle of the menu bar).
@@ -174,7 +222,8 @@ final class NotchController {
             expandWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + (dragging ? 0.05 : 0.12), execute: work)
         } else {
-            if insideExpanded(point) { collapseWork?.cancel(); collapseWork = nil; return }
+            if insideExpanded(point) { heldOpen = false; collapseWork?.cancel(); collapseWork = nil; return }
+            if heldOpen { return }
             // Mid-drag (a file out of the shelf, or one that wandered off): wait until the button is released.
             if NSEvent.pressedMouseButtons & 1 != 0 { return }
             guard collapseWork == nil else { return }
@@ -221,7 +270,12 @@ final class NotchController {
         if expanded {
             model.agenda.start()
             model.notes.reload()
-        } else if panel.isKeyWindow {
+            model.slots.reload()
+        } else {
+            heldOpen = false
+            model.mirror.hide()
+        }
+        if !expanded && panel.isKeyWindow {
             // Typing in the Inbox box made the panel key; hand the keyboard back once the notch folds away.
             panel.resignKey()
         }

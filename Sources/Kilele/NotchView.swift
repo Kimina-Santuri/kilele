@@ -3,8 +3,8 @@ import ServiceManagement
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The black shape hanging from the notch. Collapsed it matches the notch (plus wings for music or a notice);
-/// expanded it opens into a panel with the Now and Shelf tabs.
+/// The black shape hanging from the notch. Collapsed it's the pill (or the bare notch, with wings for music or a
+/// notice); expanded it opens into a panel with the Now, Today, Notes and Shelf tabs.
 struct NotchRoot: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var player: NowPlaying
@@ -19,9 +19,9 @@ struct NotchRoot: View {
                 .overlay(alignment: .top) {
                     Group {
                         if model.expanded {
-                            ExpandedView(model: model, player: player, shelf: model.shelf, agenda: model.agenda)
+                            ExpandedView(model: model, player: player, shelf: model.shelf, notes: model.notes, mirror: model.mirror)
                         } else {
-                            CollapsedView(model: model, player: player)
+                            CollapsedView(model: model, player: player, shelf: model.shelf, notes: model.notes, mic: model.mic, memo: model.memo, autoShelf: model.autoShelf)
                         }
                     }
                     .frame(width: size.width, height: size.height, alignment: .top)
@@ -39,19 +39,29 @@ struct NotchRoot: View {
 struct CollapsedView: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var player: NowPlaying
+    @ObservedObject var shelf: Shelf
+    @ObservedObject var notes: Notes
+    @ObservedObject var mic: MicWatcher
+    @ObservedObject var memo: VoiceMemo
+    @ObservedObject var autoShelf: AutoShelf
 
     var body: some View {
         if model.hud == nil && model.pillMode {
             HStack(spacing: 0) {
-                HStack(spacing: 14) {
-                    PillIcon(symbol: "tray", badge: model.shelf.items.count, help: "Shelf") { model.open(.shelf, false) }
-                    if model.notes.available { PillIcon(symbol: "square.and.pencil", help: "Quick note to Inbox") { model.open(.notes, true) } }
+                HStack(spacing: 10) {
+                    PillIcon(symbol: autoShelf.downloading ? "arrow.down.circle" : "tray", badge: shelf.items.count, help: autoShelf.downloading ? "Downloading… (Shelf)" : "Shelf") { model.open(.shelf, false) }
+                    if notes.available { PillIcon(symbol: "square.and.pencil", help: "Quick note (⌃⌥N)") { model.open(.notes, true) } }
+                    if memo.recording {
+                        PillIcon(symbol: "record.circle.fill", tint: .red, help: "Stop recording the voice memo") { memo.stop() }
+                    } else if mic.inUse || mic.muted {
+                        PillIcon(symbol: mic.muted ? "mic.slash.fill" : "mic.fill", tint: mic.muted ? .white.opacity(0.6) : .orange, help: mic.muted ? "Microphone muted: click to unmute" : "Microphone in use: click to mute") { mic.toggleMute() }
+                    }
                 }
                 .frame(width: model.wingWidth, height: model.notchSize.height)
                 Spacer(minLength: model.notchSize.width)
-                HStack(spacing: 14) {
+                HStack(spacing: 10) {
                     MusicPillIcon(player: player) { model.open(.now, false) }
-                    NextEventIcon(agenda: model.agenda) { model.open(.now, false) }
+                    TimePill(agenda: model.agenda, focus: model.focus) { model.open(.today, false) }
                 }
                 .frame(width: model.wingWidth, height: model.notchSize.height)
             }
@@ -84,6 +94,74 @@ struct CollapsedView: View {
             }
         } else {
             EqualizerBars().frame(width: 16, height: 12)
+        }
+    }
+}
+
+struct PillIcon: View {
+    var symbol: String
+    var badge = 0
+    var tint: Color = .white.opacity(0.85)
+    var help: String
+    var action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 13, weight: .medium)).foregroundStyle(tint)
+                .frame(width: 22, height: 22).contentShape(Rectangle())
+                .overlay(alignment: .topTrailing) {
+                    if badge > 0 {
+                        Text("\(badge)").font(.system(size: 8, weight: .bold)).foregroundStyle(.black)
+                            .padding(.horizontal, 3).background(Capsule().fill(.white)).offset(x: 5, y: -3)
+                    }
+                }
+        }
+        .buttonStyle(.plain).help(help)
+    }
+}
+
+/// Play/pause when something is loaded (bouncing bars while it plays); otherwise opens the Now tab.
+struct MusicPillIcon: View {
+    @ObservedObject var player: NowPlaying
+    var openNow: () -> Void
+    var body: some View {
+        Button { player.hasMedia ? player.playPause() : openNow() } label: {
+            Group {
+                if player.isPlaying { EqualizerBars().frame(width: 16, height: 12) }
+                else { Image(systemName: player.hasMedia ? "play.fill" : "music.note").font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.85)) }
+            }
+            .frame(width: 22, height: 22).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).help(player.hasMedia ? "Play or pause \(player.title)" : "Now playing")
+    }
+}
+
+/// The pill's clock: a running focus timer, else time left in the event you're in, else the countdown (pinned event
+/// or the next one, within a week), else a calendar icon.
+struct TimePill: View {
+    @ObservedObject var agenda: Agenda
+    @ObservedObject var focus: FocusTimer
+    var open: () -> Void
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            Button(action: open) { label(at: context.date).frame(minWidth: 22, minHeight: 22).contentShape(Rectangle()) }
+                .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder private func label(at now: Date) -> some View {
+        let text = Font.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit()
+        if focus.running {
+            HStack(spacing: 3) { Image(systemName: "timer").font(.system(size: 10)); Text(FocusTimer.clock(focus.remaining(at: now))).font(text) }
+                .foregroundStyle(.orange).help("Focus")
+        } else if let session = agenda.session(at: now) {
+            Text("\(Agenda.span(session.endDate.timeIntervalSince(now))) left").font(text).foregroundStyle(.white.opacity(0.9))
+                .lineLimit(1).minimumScaleFactor(0.7).help(session.title ?? "Now")
+        } else if let next = agenda.countdownTarget(at: now), next.startDate.timeIntervalSince(now) < 7 * 86_400 {
+            Text(Agenda.span(next.startDate.timeIntervalSince(now))).font(text).foregroundStyle(.white.opacity(0.9))
+                .lineLimit(1).minimumScaleFactor(0.7).help("\(next.title ?? "Next event")")
+        } else {
+            Image(systemName: "calendar").font(.system(size: 13, weight: .medium)).foregroundStyle(.white.opacity(0.85))
         }
     }
 }
@@ -140,30 +218,45 @@ struct ExpandedView: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var player: NowPlaying
     @ObservedObject var shelf: Shelf
-    @ObservedObject var agenda: Agenda
+    @ObservedObject var notes: Notes
+    @ObservedObject var mirror: Mirror
 
     var body: some View {
         VStack(spacing: 0) {
-            // The strip either side of the camera: tabs on the left, settings on the right.
-            HStack(spacing: 6) {
+            // The strip either side of the camera: tabs on the left, mirror and settings on the right.
+            HStack(spacing: 4) {
                 TabButton(title: "Now", selected: model.tab == .now) { model.tab = .now }
-                if model.notes.available { TabButton(title: "Notes", selected: model.tab == .notes) { model.tab = .notes } }
+                TabButton(title: "Today", selected: model.tab == .today) { model.tab = .today }
+                if notes.available { TabButton(title: "Notes", selected: model.tab == .notes) { model.tab = .notes } }
                 TabButton(title: shelf.items.isEmpty ? "Shelf" : "Shelf \(shelf.items.count)", selected: model.tab == .shelf) { model.tab = .shelf }
                 Spacer(minLength: model.notchSize.width + 24)
-                SettingsMenu(model: model)
+                Button { mirror.toggle() } label: {
+                    Image(systemName: mirror.showing ? "video.fill" : "video").font(.system(size: 12)).foregroundStyle(.white.opacity(mirror.showing ? 1 : 0.6))
+                }
+                .buttonStyle(.plain).help("Camera mirror")
+                SettingsMenu(model: model, lyrics: model.lyrics, autoShelf: model.autoShelf, updater: model.updater).padding(.leading, 8)
             }
             .padding(.horizontal, 20)
             .frame(height: model.notchSize.height)
 
             Group {
-                switch model.tab {
-                case .now: NowTab(player: player, agenda: agenda)
-                case .notes: NotesTab(notes: model.notes)
-                case .shelf: ShelfTab(shelf: shelf, notes: model.notes, dropping: model.dropping)
+                if mirror.showing {
+                    MirrorView(session: mirror.session)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if mirror.denied {
+                    Text("Camera access is off. Turn it on in System Settings › Privacy & Security › Camera.").font(.system(size: 12)).foregroundStyle(.white.opacity(0.6))
+                } else {
+                    switch model.tab {
+                    case .now: NowTab(player: player, lyrics: model.lyrics, outputs: model.outputs, tempo: model.tempo)
+                    case .today: TodayTab(agenda: model.agenda, slots: model.slots, focus: model.focus)
+                    case .notes: NotesTab(notes: notes, focus: model.focus, memo: model.memo)
+                    case .shelf: ShelfTab(shelf: shelf, notes: notes, autoShelf: model.autoShelf, dropping: model.dropping)
+                    }
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.top, 12)
+            .padding(.top, 10)
             .padding(.bottom, 16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
@@ -184,7 +277,7 @@ struct TabButton: View {
     var body: some View {
         Button(action: action) {
             Text(title).font(.system(size: 12, weight: .semibold))
-                .padding(.horizontal, 10).padding(.vertical, 4)
+                .padding(.horizontal, 9).padding(.vertical, 4)
                 .background(Capsule().fill(.white.opacity(selected ? 0.18 : 0)))
                 .foregroundStyle(.white.opacity(selected ? 1 : 0.55))
         }
@@ -194,6 +287,9 @@ struct TabButton: View {
 
 struct SettingsMenu: View {
     @ObservedObject var model: NotchModel
+    @ObservedObject var lyrics: Lyrics
+    @ObservedObject var autoShelf: AutoShelf
+    @ObservedObject var updater: Updater
 
     var body: some View {
         Menu {
@@ -203,10 +299,23 @@ struct SettingsMenu: View {
             }))
             Toggle("Pill mode (icons beside the notch)", isOn: $model.pillMode)
             Toggle("Show music beside the notch", isOn: $model.showMusicWings).disabled(model.pillMode)
+            Toggle("Lyrics (from lrclib.net)", isOn: $lyrics.enabled)
+            Toggle("New downloads and screenshots to the shelf", isOn: $autoShelf.enabled)
+            Divider()
+            Text("⌃⌥Space  open or close the notch")
+            Text("⌃⌥N  quick note")
+            Divider()
+            if let version = updater.available {
+                Button("Update to Kilele \(version)") { updater.install() }
+            } else {
+                Button("Check for updates") { updater.check() }
+            }
+            Text(updater.status.isEmpty ? "Kilele \(updater.current)" : updater.status)
             Divider()
             Button("Quit Kilele") { NSApp.terminate(nil) }
         } label: {
-            Image(systemName: "gearshape.fill").font(.system(size: 12)).foregroundStyle(.white.opacity(0.6))
+            Image(systemName: updater.available == nil ? "gearshape.fill" : "arrow.down.circle.fill")
+                .font(.system(size: 12)).foregroundStyle(updater.available == nil ? .white.opacity(0.6) : .orange)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -214,17 +323,43 @@ struct SettingsMenu: View {
     }
 }
 
-// MARK: Now tab
+// MARK: Now tab (music)
 
 struct NowTab: View {
     @ObservedObject var player: NowPlaying
-    @ObservedObject var agenda: Agenda
+    @ObservedObject var lyrics: Lyrics
+    @ObservedObject var outputs: AudioOutputs
+    @ObservedObject var tempo: TapTempo
 
     var body: some View {
         HStack(alignment: .top, spacing: 18) {
-            NowPlayingCard(player: player).frame(width: 300, alignment: .leading)
+            NowPlayingCard(player: player).frame(width: 330, alignment: .leading)
             Rectangle().fill(.white.opacity(0.12)).frame(width: 1)
-            AgendaView(agenda: agenda)
+            VStack(alignment: .leading, spacing: 8) {
+                LyricsView(player: player, lyrics: lyrics).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                HStack(spacing: 10) {
+                    Menu {
+                        ForEach(outputs.devices) { device in
+                            Button { outputs.select(device) } label: {
+                                if device.id == outputs.current { Label(device.name, systemImage: "checkmark") } else { Text(device.name) }
+                            }
+                        }
+                    } label: {
+                        Label(outputs.currentName, systemImage: "hifispeaker.fill").font(.system(size: 11)).foregroundStyle(.white.opacity(0.75))
+                    }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Sound output")
+                    Spacer()
+                    Button { tempo.tap() } label: {
+                        HStack(spacing: 6) {
+                            Text("TAP").font(.system(size: 10, weight: .bold))
+                            Text(tempo.bpm.map { "\($0) BPM" } ?? "– BPM").font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
+                        }
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(Capsule().fill(.white.opacity(0.12)))
+                    }
+                    .buttonStyle(.plain).help("Tap along to the beat")
+                }
+            }
         }
     }
 }
@@ -234,7 +369,7 @@ struct NowPlayingCard: View {
 
     var body: some View {
         if player.hasMedia {
-            HStack(spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
                 ArtworkView(image: player.artwork, size: 76, corner: 10)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(player.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
@@ -243,9 +378,11 @@ struct NowPlayingCard: View {
                         control("backward.fill", player.previous)
                         control(player.isPlaying ? "pause.fill" : "play.fill", player.playPause)
                         control("forward.fill", player.next)
+                        Spacer()
+                        if !player.source.isEmpty { Text(player.source).font(.system(size: 10)).foregroundStyle(.white.opacity(0.35)).lineLimit(1) }
                     }
-                    .padding(.top, 8)
-                    if !player.source.isEmpty { Text(player.source).font(.system(size: 10)).foregroundStyle(.white.opacity(0.35)).padding(.top, 4) }
+                    .padding(.top, 6)
+                    if player.duration > 0 { Scrubber(player: player).padding(.top, 4) }
                 }
             }
         } else {
@@ -259,6 +396,119 @@ struct NowPlayingCard: View {
 
     private func control(_ symbol: String, _ action: @escaping () -> Void) -> some View {
         Button(action: action) { Image(systemName: symbol).font(.system(size: 15)) }.buttonStyle(.plain)
+    }
+}
+
+/// Position in the track; drag to seek (sent when you let go).
+struct Scrubber: View {
+    @ObservedObject var player: NowPlaying
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.5)) { context in
+            let position = player.scrubbing ?? player.position(at: context.date)
+            VStack(spacing: 1) {
+                Slider(value: Binding(get: { position }, set: { player.scrubbing = $0 }), in: 0...max(1, player.duration)) { editing in
+                    if !editing, let target = player.scrubbing { player.seek(to: target); player.scrubbing = nil }
+                }
+                .controlSize(.mini).tint(.white)
+                HStack {
+                    Text(Self.time(position)); Spacer(); Text("-" + Self.time(max(0, player.duration - position)))
+                }
+                .font(.system(size: 9).monospacedDigit()).foregroundStyle(.white.opacity(0.45))
+            }
+        }
+    }
+
+    static func time(_ s: Double) -> String {
+        let t = Int(s)
+        return t >= 3600 ? String(format: "%d:%02d:%02d", t / 3600, t / 60 % 60, t % 60) : String(format: "%d:%02d", t / 60, t % 60)
+    }
+}
+
+struct LyricsView: View {
+    @ObservedObject var player: NowPlaying
+    @ObservedObject var lyrics: Lyrics
+
+    var body: some View {
+        if !lyrics.enabled {
+            Text("Lyrics are off (gear menu).").font(.system(size: 11)).foregroundStyle(.white.opacity(0.4))
+        } else if !lyrics.lines.isEmpty {
+            TimelineView(.periodic(from: .now, by: 0.25)) { context in
+                let line = lyrics.current(at: player.position(at: context.date))
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(line.now.isEmpty ? "♪" : line.now).font(.system(size: 15, weight: .semibold)).lineLimit(2)
+                    Text(line.next).font(.system(size: 12)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
+                }
+                .animation(.easeOut(duration: 0.2), value: line.now)
+            }
+        } else if lyrics.searching {
+            Text("Looking for lyrics…").font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
+        } else if player.hasMedia {
+            Text("No synced lyrics for this one.").font(.system(size: 11)).foregroundStyle(.white.opacity(0.4))
+        } else {
+            Text("Lyrics follow the song here while music plays.").font(.system(size: 11)).foregroundStyle(.white.opacity(0.4))
+        }
+    }
+}
+
+// MARK: Today tab (calendar, countdown, studio)
+
+struct TodayTab: View {
+    @ObservedObject var agenda: Agenda
+    @ObservedObject var slots: StudioSlots
+    @ObservedObject var focus: FocusTimer
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 18) {
+            AgendaView(agenda: agenda).frame(width: 330, alignment: .topLeading)
+            Rectangle().fill(.white.opacity(0.12)).frame(width: 1)
+            VStack(alignment: .leading, spacing: 10) {
+                TimelineView(.periodic(from: .now, by: 1)) { context in countdown(at: context.date) }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("OPEN NEXT AT SANTURI").font(.system(size: 10, weight: .bold)).foregroundStyle(.white.opacity(0.45))
+                    if slots.slots.isEmpty {
+                        Text(slots.failed ? "Couldn't reach the bookings site." : "Checking the studio…").font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
+                    }
+                    ForEach(slots.slots) { slot in
+                        Button { slots.book(slot) } label: {
+                            HStack {
+                                Text(slot.name).font(.system(size: 12)).lineLimit(1)
+                                Spacer()
+                                Text(Self.when(slot.start) + " ↗").font(.system(size: 10, weight: .bold).monospacedDigit()).foregroundStyle(.white.opacity(0.7))
+                            }
+                        }
+                        .buttonStyle(.plain).help("Book \(slot.name)")
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func countdown(at now: Date) -> some View {
+        if let session = agenda.session(at: now) {
+            let total = session.endDate.timeIntervalSince(session.startDate), done = now.timeIntervalSince(session.startDate)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("NOW").font(.system(size: 10, weight: .bold)).foregroundStyle(.white.opacity(0.45))
+                HStack { Text(session.title ?? "Event").font(.system(size: 13, weight: .semibold)).lineLimit(1); Spacer(); Text("\(Agenda.span(session.endDate.timeIntervalSince(now))) left").font(.system(size: 12, weight: .semibold).monospacedDigit()) }
+                LevelBar(level: total > 0 ? done / total : 0).frame(height: 3)
+            }
+        } else if let next = agenda.countdownTarget(at: now) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(agenda.pinned == next ? "COUNTING DOWN TO" : "NEXT").font(.system(size: 10, weight: .bold)).foregroundStyle(.white.opacity(0.45))
+                HStack { Text(next.title ?? "Event").font(.system(size: 13, weight: .semibold)).lineLimit(1); Spacer(); Text("in \(Agenda.span(next.startDate.timeIntervalSince(now)))").font(.system(size: 12, weight: .semibold).monospacedDigit()) }
+            }
+        } else {
+            Text("Pin an event (📌) to count down to it.").font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
+        }
+    }
+
+    static func when(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        if Calendar.current.isDateInToday(date) { return "Today " + f.string(from: date) }
+        if Calendar.current.isDateInTomorrow(date) { return "Tomorrow " + f.string(from: date) }
+        f.dateFormat = "EEE HH:mm"
+        return f.string(from: date)
     }
 }
 
@@ -279,6 +529,14 @@ struct AgendaView: View {
                         Circle().fill(Color(cgColor: event.calendar.cgColor)).frame(width: 6, height: 6)
                         Text(when(event)).font(.system(size: 11).monospacedDigit()).foregroundStyle(.white.opacity(0.55)).frame(width: 64, alignment: .leading)
                         Text(event.title ?? "Event").font(.system(size: 12)).lineLimit(1)
+                        Spacer(minLength: 4)
+                        if !event.isAllDay {
+                            let pinned = agenda.pinned == event
+                            Button { agenda.pin(pinned ? nil : event) } label: {
+                                Image(systemName: pinned ? "pin.fill" : "pin").font(.system(size: 10)).foregroundStyle(.white.opacity(pinned ? 0.9 : 0.35))
+                            }
+                            .buttonStyle(.plain).help(pinned ? "Stop counting down" : "Count down to this")
+                        }
                     }
                 }
                 ForEach(agenda.reminders, id: \.self) { reminder in
@@ -289,7 +547,6 @@ struct AgendaView: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func when(_ event: EKEvent) -> String {
@@ -300,98 +557,65 @@ struct AgendaView: View {
     }
 }
 
-// MARK: Shelf tab
-
-struct ShelfTab: View {
-    @ObservedObject var shelf: Shelf
-    @ObservedObject var notes: Notes
-    var dropping: Bool
-
-    var body: some View {
-        if shelf.items.isEmpty {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(.white.opacity(dropping ? 0.8 : 0.3), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
-                .overlay(Label("Drop files here to keep them handy", systemImage: "tray.and.arrow.down").font(.system(size: 12)).foregroundStyle(.white.opacity(0.7)))
-        } else {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .top) {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(alignment: .top, spacing: 10) {
-                            ForEach(shelf.items) { item in ShelfTile(shelf: shelf, notes: notes, item: item) }
-                        }
-                    }
-                    Button("Clear") { shelf.clear() }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
-                }
-                if notes.available && !notes.status.isEmpty {
-                    Text(notes.status).font(.system(size: 11)).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
-                }
-            }
-        }
-    }
-}
-
-struct ShelfTile: View {
-    @ObservedObject var shelf: Shelf
-    var notes: Notes
-    var item: Shelf.Item
-
-    private var hovering: Bool { shelf.hovered == item.id }
-    private func remove() { shelf.remove(item) }
-
-    var body: some View {
-        VStack(spacing: 6) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: item.url.path)).resizable().frame(width: 46, height: 46)
-            Text(item.url.lastPathComponent).font(.system(size: 10)).lineLimit(2).multilineTextAlignment(.center).frame(width: 76)
-        }
-        .padding(6)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.white.opacity(hovering ? 0.1 : 0)))
-        .overlay(alignment: .topTrailing) {
-            if hovering {
-                Button(action: remove) { Image(systemName: "xmark.circle.fill").font(.system(size: 13)) }.buttonStyle(.plain).foregroundStyle(.white.opacity(0.8))
-            }
-        }
-        .overlay(alignment: .topLeading) {
-            if hovering && notes.available {
-                Button { notes.attach(item.url) } label: { Image(systemName: "note.text.badge.plus").font(.system(size: 12)) }
-                    .buttonStyle(.plain).foregroundStyle(.white.opacity(0.8)).help("Add to notes (copied into notes/assets, linked in Inbox)")
-            }
-        }
-        .onHover { inside in if inside { shelf.hovered = item.id } else if hovering { shelf.hovered = nil } }
-        .onDrag { NSItemProvider(contentsOf: item.url) ?? NSItemProvider() }
-        .onTapGesture(count: 2) { NSWorkspace.shared.open(item.url) }
-        .contextMenu {
-            Button("Open") { NSWorkspace.shared.open(item.url) }
-            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
-            if notes.available { Button("Add to notes") { notes.attach(item.url) } }
-            Divider()
-            Button("Remove from shelf", action: remove)
-        }
-        .help(item.url.path)
-    }
-}
-
-// MARK: Notes tab (Tsuzuri)
+// MARK: Notes tab (Tsuzuri, focus, voice memos)
 
 struct NotesTab: View {
     @ObservedObject var notes: Notes
+    @ObservedObject var focus: FocusTimer
+    @ObservedObject var memo: VoiceMemo
 
     var body: some View {
         HStack(alignment: .top, spacing: 18) {
-            VStack(alignment: .leading, spacing: 10) {
-                TextField("Capture to Inbox…", text: Binding(get: { notes.draft }, set: { notes.draft = $0 }))
+            VStack(alignment: .leading, spacing: 8) {
+                TextField(notes.target == .inbox ? "Capture to Inbox…" : "Add to today's journal…", text: Binding(get: { notes.draft }, set: { notes.draft = $0 }))
                     .textFieldStyle(.plain).font(.system(size: 13))
-                    .padding(.horizontal, 10).padding(.vertical, 8)
+                    .padding(.horizontal, 10).padding(.vertical, 7)
                     .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.white.opacity(0.1)))
                     .onSubmit { notes.capture() }
+                HStack(spacing: 6) {
+                    Text("To").font(.system(size: 10, weight: .bold)).foregroundStyle(.white.opacity(0.45))
+                    Chip(title: "Inbox", selected: notes.target == .inbox) { notes.target = .inbox }
+                    Chip(title: "Today", selected: notes.target == .journal) { notes.target = .journal }
+                    Spacer()
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Button { memo.toggle() } label: {
+                            Label(memo.recording ? Scrubber.time(context.date.timeIntervalSince(memo.startedAt ?? context.date)) : "Voice memo",
+                                  systemImage: memo.recording ? "stop.circle.fill" : "mic.circle")
+                                .font(.system(size: 11, weight: .semibold)).foregroundStyle(memo.recording ? .red : .white.opacity(0.8))
+                        }
+                        .buttonStyle(.plain).help(memo.recording ? "Stop and file the memo" : "Record a voice memo into your notes")
+                    }
+                }
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    HStack(spacing: 6) {
+                        if focus.running {
+                            Image(systemName: "timer").font(.system(size: 11)).foregroundStyle(.orange)
+                            Text(FocusTimer.clock(focus.remaining(at: context.date)) + (focus.label.isEmpty ? "" : " · \(focus.label)"))
+                                .font(.system(size: 11, weight: .semibold).monospacedDigit()).lineLimit(1)
+                            Spacer()
+                            Chip(title: "Stop", selected: false) { focus.stop() }
+                        } else {
+                            Text("Focus").font(.system(size: 10, weight: .bold)).foregroundStyle(.white.opacity(0.45))
+                            ForEach([25, 50, 90], id: \.self) { minutes in
+                                Chip(title: "\(minutes)m", selected: false) {
+                                    focus.start(minutes: minutes, label: notes.draft.trimmingCharacters(in: .whitespaces))
+                                    notes.draft = ""
+                                }
+                                .help("Start a \(minutes)-minute focus session (the text above becomes its label); it's logged in today's journal")
+                            }
+                            Spacer()
+                        }
+                    }
+                }
                 HStack(spacing: 6) {
                     Pill(title: "Today", symbol: "calendar") { notes.openTsuzuri("today") }
                     Pill(title: "Home", symbol: "house") { notes.openTsuzuri() }
                     Pill(title: "Inbox", symbol: "tray") { notes.openTsuzuri("Inbox") }
                 }
-                Text(notes.status.isEmpty ? "Press Enter to add it to Inbox. It syncs to your phone." : notes.status)
-                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5)).lineLimit(2)
+                Text(memo.denied ? "Microphone access is off (System Settings › Privacy & Security)." : notes.status)
+                    .font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
             }
-            .frame(width: 300, alignment: .leading)
+            .frame(width: 330, alignment: .leading)
             Rectangle().fill(.white.opacity(0.12)).frame(width: 1)
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 6) {
@@ -430,6 +654,20 @@ struct NotesTab: View {
     }
 }
 
+struct Chip: View {
+    var title: String
+    var selected: Bool
+    var action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 11, weight: .semibold))
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Capsule().fill(.white.opacity(selected ? 0.3 : 0.1)))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 struct Pill: View {
     var title: String
     var symbol: String
@@ -444,62 +682,81 @@ struct Pill: View {
     }
 }
 
-// MARK: Pill icons
+// MARK: Shelf tab
 
-struct PillIcon: View {
-    var symbol: String
-    var badge = 0
-    var help: String
-    var action: () -> Void
+struct ShelfTab: View {
+    @ObservedObject var shelf: Shelf
+    @ObservedObject var notes: Notes
+    @ObservedObject var autoShelf: AutoShelf
+    var dropping: Bool
+
     var body: some View {
-        Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 13, weight: .medium)).foregroundStyle(.white.opacity(0.85))
-                .frame(width: 22, height: 22).contentShape(Rectangle())
-                .overlay(alignment: .topTrailing) {
-                    if badge > 0 {
-                        Text("\(badge)").font(.system(size: 8, weight: .bold)).foregroundStyle(.black)
-                            .padding(.horizontal, 3).background(Capsule().fill(.white)).offset(x: 5, y: -3)
+        if shelf.items.isEmpty {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(.white.opacity(dropping ? 0.8 : 0.3), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+                .overlay(Label(autoShelf.downloading ? "Downloading… it'll land here" : "Drop files here to keep them handy", systemImage: "tray.and.arrow.down").font(.system(size: 12)).foregroundStyle(.white.opacity(0.7)))
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .top) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(alignment: .top, spacing: 10) {
+                            ForEach(shelf.items) { item in ShelfTile(shelf: shelf, notes: notes, item: item) }
+                        }
                     }
+                    Button("Clear") { shelf.clear() }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
                 }
-        }
-        .buttonStyle(.plain).help(help)
-    }
-}
-
-/// Play/pause when a player is loaded (bouncing bars while it plays); otherwise opens the Now tab.
-struct MusicPillIcon: View {
-    @ObservedObject var player: NowPlaying
-    var openNow: () -> Void
-    var body: some View {
-        Button { player.hasMedia ? player.playPause() : openNow() } label: {
-            Group {
-                if player.isPlaying { EqualizerBars().frame(width: 16, height: 12) }
-                else { Image(systemName: player.hasMedia ? "play.fill" : "music.note").font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.85)) }
+                Text(autoShelf.downloading ? "Downloading… it'll land on the shelf when it's done." : notes.status)
+                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
             }
-            .frame(width: 22, height: 22).contentShape(Rectangle())
         }
-        .buttonStyle(.plain).help(player.hasMedia ? "Play or pause \(player.title)" : "Now playing")
     }
 }
 
-/// The next event's start time today (or a calendar icon), opening the Now tab.
-struct NextEventIcon: View {
-    @ObservedObject var agenda: Agenda
-    var action: () -> Void
+struct ShelfTile: View {
+    @ObservedObject var shelf: Shelf
+    var notes: Notes
+    var item: Shelf.Item
+
+    private var hovering: Bool { shelf.hovered == item.id }
+    private func remove() { shelf.remove(item) }
+    private func airDrop() { NSSharingService(named: .sendViaAirDrop)?.perform(withItems: [item.url]) }
+
     var body: some View {
-        Button(action: action) {
-            Group {
-                if let next = agenda.events.first(where: { !$0.isAllDay && $0.startDate > Date() && Calendar.current.isDateInToday($0.startDate) }) {
-                    Text(Self.time.string(from: next.startDate)).font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit()).foregroundStyle(.white.opacity(0.9))
-                } else {
-                    Image(systemName: "calendar").font(.system(size: 13, weight: .medium)).foregroundStyle(.white.opacity(0.85))
-                }
-            }
-            .frame(minWidth: 22, minHeight: 22).contentShape(Rectangle())
+        VStack(spacing: 6) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: item.url.path)).resizable().frame(width: 46, height: 46)
+            Text(item.url.lastPathComponent).font(.system(size: 10)).lineLimit(2).multilineTextAlignment(.center).frame(width: 76)
         }
-        .buttonStyle(.plain).help("Calendar")
+        .padding(6)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.white.opacity(hovering ? 0.1 : 0)))
+        .overlay(alignment: .topTrailing) {
+            if hovering {
+                Button(action: remove) { Image(systemName: "xmark.circle.fill").font(.system(size: 13)) }.buttonStyle(.plain).foregroundStyle(.white.opacity(0.8))
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            if hovering && notes.available {
+                Button { notes.attach(item.url) } label: { Image(systemName: "note.text.badge.plus").font(.system(size: 12)) }
+                    .buttonStyle(.plain).foregroundStyle(.white.opacity(0.8)).help("Add to notes (copied into notes/assets, linked in Inbox or today's journal)")
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if hovering {
+                Button(action: airDrop) { Image(systemName: "square.and.arrow.up.circle.fill").font(.system(size: 13)) }
+                    .buttonStyle(.plain).foregroundStyle(.white.opacity(0.8)).help("AirDrop")
+                    .offset(y: -18)
+            }
+        }
+        .onHover { inside in if inside { shelf.hovered = item.id } else if hovering { shelf.hovered = nil } }
+        .onDrag { NSItemProvider(contentsOf: item.url) ?? NSItemProvider() }
+        .onTapGesture(count: 2) { NSWorkspace.shared.open(item.url) }
+        .contextMenu {
+            Button("Open") { NSWorkspace.shared.open(item.url) }
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
+            Button("AirDrop…", action: airDrop)
+            if notes.available { Button("Add to notes") { notes.attach(item.url) } }
+            Divider()
+            Button("Remove from shelf", action: remove)
+        }
+        .help(item.url.path)
     }
-
-    private static let time: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm"; return f }()
 }
-

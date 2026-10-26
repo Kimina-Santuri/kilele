@@ -16,8 +16,26 @@ final class NowPlaying: ObservableObject {
     @Published private(set) var isPlaying = false
     @Published private(set) var artwork: NSImage?
     @Published private(set) var source = ""   // the app it's playing in, e.g. "Google Chrome"
+    @Published private(set) var duration: Double = 0   // seconds; 0 = unknown (no scrubber)
+    @Published var scrubbing: Double?                  // while the scrubber is dragged
+    private var elapsed: Double = 0, stamp = Date(), rate: Double = 1
 
     var hasMedia: Bool { !title.isEmpty }
+    /// Called with title, artist and length when the track changes (for lyrics).
+    var onTrackChange: (String, String, Double) -> Void = { _, _, _ in }
+
+    /// Where playback is now: the last reported position, moved on by the time since, while playing.
+    func position(at date: Date = Date()) -> Double {
+        let p = elapsed + (isPlaying ? date.timeIntervalSince(stamp) * rate : 0)
+        return duration > 0 ? min(max(0, p), duration) : max(0, p)
+    }
+
+    func seek(to seconds: Double) {
+        guard let adapter else { return }
+        adapter.seek(to: seconds)
+        elapsed = seconds
+        stamp = Date()
+    }
 
     private let scripts = DispatchQueue(label: "kilele.nowplaying")
     private var artworkKey = ""
@@ -29,11 +47,17 @@ final class NowPlaying: ObservableObject {
         self.adapter = adapter
         adapter.onUpdate = { [weak self] info in
             guard let self, self.adapter != nil else { return }
+            let changed = (info?.title ?? "") != self.title || (info?.artist ?? "") != self.artist
             self.title = info?.title ?? ""
             self.artist = info?.artist ?? ""
             self.isPlaying = info?.playing ?? false
             self.artwork = info?.artwork
             self.source = info?.source ?? ""
+            self.duration = info?.duration ?? 0
+            self.elapsed = info?.elapsed ?? 0
+            self.stamp = info?.stamp ?? Date()
+            self.rate = (info?.rate ?? 1) > 0 ? (info?.rate ?? 1) : 1
+            if changed || self.duration > 0 { self.onTrackChange(self.title, self.artist, self.duration) }
         }
         adapter.onFailure = { [weak self] in
             self?.adapter = nil

@@ -11,6 +11,10 @@ final class MediaRemoteAdapter {
         var playing: Bool
         var artwork: NSImage?
         var source: String   // the app's name, e.g. "Google Chrome"
+        var duration: Double // seconds; 0 when the player doesn't say
+        var elapsed: Double  // seconds into the track at `stamp`
+        var stamp: Date
+        var rate: Double
     }
 
     /// Called on the main queue: the current media, or nil when nothing is reporting.
@@ -46,7 +50,7 @@ final class MediaRemoteAdapter {
     func start() {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
-        p.arguments = [script.path, framework.path, "stream", "--debounce=150"]
+        p.arguments = [script.path, framework.path, "stream", "--debounce=150", "--micros"]
         let out = Pipe()
         p.standardOutput = out
         p.standardError = FileHandle.nullDevice
@@ -65,10 +69,14 @@ final class MediaRemoteAdapter {
     }
 
     /// MediaRemote command IDs: 2 toggle play/pause, 4 next track, 5 previous track.
-    func send(_ command: Int) {
+    func send(_ command: Int) { run(["send", String(command)]) }
+
+    func seek(to seconds: Double) { run(["seek", String(Int64(max(0, seconds) * 1_000_000))]) }
+
+    private func run(_ args: [String]) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
-        p.arguments = [script.path, framework.path, "send", String(command)]
+        p.arguments = [script.path, framework.path] + args
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         try? p.run()
@@ -112,8 +120,14 @@ final class MediaRemoteAdapter {
         guard let title = state["title"] as? String, !title.isEmpty else { return nil }
         // Web players report the browser as the parent app.
         let app = (state["parentApplicationBundleIdentifier"] as? String) ?? (state["bundleIdentifier"] as? String)
+        let state = self.state
+        let micros = { (key: String) in (state[key] as? NSNumber)?.doubleValue ?? 0 }
+        let stamp = micros("timestampEpochMicros")
         return Info(title: title, artist: state["artist"] as? String ?? "", playing: state["playing"] as? Bool ?? false,
-                    artwork: artwork, source: app.map(Self.appName) ?? "")
+                    artwork: artwork, source: app.map(Self.appName) ?? "",
+                    duration: micros("durationMicros") / 1_000_000, elapsed: micros("elapsedTimeMicros") / 1_000_000,
+                    stamp: stamp > 0 ? Date(timeIntervalSince1970: stamp / 1_000_000) : Date(),
+                    rate: (state["playbackRate"] as? NSNumber)?.doubleValue ?? 1)
     }
 
     private static func appName(_ bundleID: String) -> String {
