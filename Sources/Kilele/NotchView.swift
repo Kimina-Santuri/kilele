@@ -702,9 +702,17 @@ struct AlertsTab: View {
                 Button("Open Privacy & Security") { Alerts.openPrivacySettings() }.buttonStyle(.plain)
                     .font(.system(size: 11, weight: .semibold)).padding(.horizontal, 10).padding(.vertical, 4)
                     .background(Capsule().fill(.white.opacity(0.12)))
-            } else if alerts.items.isEmpty {
+            } else if alerts.replaceBanners && !alerts.accessibility {
+                HStack(spacing: 8) {
+                    Text("To replace macOS's banners, allow Kilele under Accessibility.").font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+                    Button("Allow") { alerts.askForAccessibility() }.buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .semibold)).padding(.horizontal, 10).padding(.vertical, 3)
+                        .background(Capsule().fill(.white.opacity(0.12)))
+                }
+            }
+            if alerts.allowed && alerts.items.isEmpty {
                 Text("No notifications in the last day.").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
-            } else {
+            } else if alerts.allowed {
                 ScrollView(.vertical, showsIndicators: false) {
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 6) {
                         ForEach(alerts.items) { alert in AlertRow(alert: alert, alerts: alerts) }
@@ -770,7 +778,8 @@ struct AlertAppsMenu: View {
                     }
                 }
             }
-            Section("Stop macOS banners (Alert style: None)") {
+            Toggle("Replace macOS banners with the notch", isOn: $alerts.replaceBanners)
+            Section("Hidden apps keep their macOS banners · settings per app") {
                 ForEach(alerts.apps, id: \.self) { app in
                     Button("\(alerts.name(app)) settings…") { Alerts.openSystemSettings(for: app) }
                 }

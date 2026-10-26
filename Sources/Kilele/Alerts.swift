@@ -17,8 +17,11 @@ struct Alert: Identifiable, Equatable {
 /// macOS asks once, or it's given under Full Disk Access. Kilele only reads it, never writes, and nothing leaves the Mac.
 /// Notifications cleared in Notification Center (or read on the phone, for Messages) drop out here too.
 ///
-/// Kilele can't stop macOS's own banners; per app, System Settings › Notifications › Alert style "None" does that
-/// while keeping "Show in Notification Centre" on, so notifications are still recorded and shown here instead.
+/// Replacing macOS's banners (with Accessibility allowed): each new banner Notification Center puts up is read and
+/// closed through Accessibility, and shown from the notch instead, at once (the database is written a few seconds
+/// later). Closing a banner leaves the notification in Notification Center. Only banners whose notification wasn't
+/// already in the record are touched, so the list in Notification Center itself is never closed, and muted apps keep
+/// their macOS banners.
 final class Alerts: ObservableObject {
     /// Last 24 hours, newest first, without muted apps or ones you've dismissed.
     @Published private(set) var items: [Alert] = []
@@ -32,6 +35,11 @@ final class Alerts: ObservableObject {
     }
     @Published private(set) var seenUntil = Date(timeIntervalSince1970: UserDefaults.standard.double(forKey: "alertsSeenUntil"))
     var unread: Int { items.filter { $0.date > seenUntil }.count }
+    /// Close macOS's banners and show them from the notch instead.
+    @Published var replaceBanners = UserDefaults.standard.object(forKey: "replaceBanners") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(replaceBanners, forKey: "replaceBanners"); if replaceBanners { askForAccessibility() } }
+    }
+    @Published private(set) var accessibility = AXIsProcessTrusted()
     var onNew: (Alert) -> Void = { _ in }
 
     private static let folder = NSHomeDirectory() + "/Library/Group Containers/group.com.apple.usernoted/db2/"
@@ -42,12 +50,31 @@ final class Alerts: ObservableObject {
     private var stamp = ""
     private var names: [String: String] = [:]
     private var icons: [String: NSImage] = [:]
+    /// Notifications already shown from a banner, so the database read doesn't show them a second time.
+    private var peeked: Set<Data> = []
+    private let banners = BannerCatcher()
 
     init() {
         // The database is written through its WAL file; look every 2 s and read only when something changed.
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.poll() }
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.publish() } // age out old ones
         poll()
+        banners.decide = { [weak self] banner in self?.caught(banner) ?? false }
+    }
+
+    func askForAccessibility() {
+        accessibility = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+    }
+
+    /// A new banner: show it from the notch and close macOS's (true), or leave it.
+    private func caught(_ banner: BannerCatcher.Banner) -> Bool {
+        guard replaceBanners, let known, !known.contains(banner.id), !peeked.contains(banner.id) else { return false }
+        let app = NSWorkspace.shared.runningApplications.first { $0.localizedName == banner.appName }?.bundleIdentifier
+            ?? apps.first { name($0) == banner.appName } ?? banner.appName
+        guard !isMuted(app) else { return false }
+        peeked.insert(banner.id)
+        onNew(Alert(id: banner.id, app: app, title: banner.title, subtitle: banner.subtitle, body: banner.body, date: Date(), link: nil))
+        return true
     }
 
     private func poll() {
@@ -67,6 +94,7 @@ final class Alerts: ObservableObject {
 
     private func take(_ found: [Alert]?) {
         allowed = found != nil
+        accessibility = AXIsProcessTrusted()
         guard let found else { return }
         let fresh = known.map { k in found.filter { !k.contains($0.id) } } ?? []
         known = Set(found.map(\.id))
@@ -74,7 +102,7 @@ final class Alerts: ObservableObject {
         dismissed.formIntersection(known ?? [])
         publish()
         // Several at once (a burst, or the Mac waking): show the newest.
-        if let newest = fresh.filter({ !isMuted($0.app) && $0.date > Date().addingTimeInterval(-120) && $0.app != Bundle.main.bundleIdentifier }).max(by: { $0.date < $1.date }) {
+        if let newest = fresh.filter({ !peeked.contains($0.id) && !isMuted($0.app) && $0.date > Date().addingTimeInterval(-120) && $0.app != Bundle.main.bundleIdentifier }).max(by: { $0.date < $1.date }) {
             onNew(newest)
         }
     }
@@ -115,7 +143,8 @@ final class Alerts: ObservableObject {
 
     /// Goes where the notification points (the Messages conversation), otherwise opens the app.
     func open(_ alert: Alert) {
-        if let link = alert.link, NSWorkspace.shared.open(link) { return }
+        // A peek made from a banner has no link yet; the record may have one by now.
+        if let link = alert.link ?? all.first(where: { $0.id == alert.id })?.link, NSWorkspace.shared.open(link) { return }
         if let url = Self.appURL(alert.app) { NSWorkspace.shared.openApplication(at: url, configuration: .init()) }
     }
 
@@ -175,5 +204,64 @@ final class Alerts: ObservableObject {
     private static func blob(_ st: OpaquePointer?, _ column: Int32) -> Data? {
         guard let bytes = sqlite3_column_blob(st, column) else { return nil }
         return Data(bytes: bytes, count: Int(sqlite3_column_bytes(st, column)))
+    }
+}
+
+/// Watches Notification Center's banners through Accessibility, a few times a second on its own queue. The banner is
+/// an AXGroup with subrole AXNotificationCenterBanner, its AXIdentifier the notification's uuid, a description of
+/// "App, title, body", title/subtitle/body texts, and a "Close" action.
+final class BannerCatcher {
+    struct Banner { let id: Data; let appName: String; let title: String; let subtitle: String; let body: String }
+    /// Asked on the main thread: true closes the banner.
+    var decide: (Banner) -> Bool = { _ in false }
+    private let queue = DispatchQueue(label: "kilele.banners")
+    private var handled: Set<Data> = []
+
+    init() {
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 2, repeating: 0.3)
+        timer.setEventHandler { [weak self] in self?.scan() }
+        timer.resume()
+        self.timer = timer
+    }
+    private var timer: DispatchSourceTimer?
+
+    private func scan() {
+        guard AXIsProcessTrusted(),
+              let pid = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == "com.apple.notificationcenterui" })?.processIdentifier else { return }
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.5)
+        for window in Self.attr(app, kAXWindowsAttribute) as? [AXUIElement] ?? [] {
+            for element in Self.banners(in: window, depth: 0) {
+                guard let uuid = (Self.attr(element, "AXIdentifier") as? String).flatMap(UUID.init(uuidString:)) else { continue }
+                let id = withUnsafeBytes(of: uuid.uuid) { Data($0) }
+                guard !handled.contains(id) else { continue }
+                handled.insert(id)
+                let texts = Dictionary((Self.attr(element, kAXChildrenAttribute) as? [AXUIElement] ?? []).compactMap { child -> (String, String)? in
+                    guard let key = Self.attr(child, "AXIdentifier") as? String, let value = Self.attr(child, kAXValueAttribute) as? String else { return nil }
+                    return (key, value)
+                }, uniquingKeysWith: { a, _ in a })
+                let description = Self.attr(element, kAXDescriptionAttribute) as? String ?? ""
+                let banner = Banner(id: id, appName: description.components(separatedBy: ", ").first ?? "", title: texts["title"] ?? "",
+                                    subtitle: texts["subtitle"] ?? "", body: texts["body"] ?? "")
+                guard DispatchQueue.main.sync(execute: { decide(banner) }) else { continue }
+                var names: CFArray?
+                AXUIElementCopyActionNames(element, &names)
+                if let close = (names as? [String])?.first(where: { $0.hasPrefix("Name:Close") }) {
+                    AXUIElementPerformAction(element, close as CFString)
+                }
+            }
+        }
+    }
+
+    private static func banners(in element: AXUIElement, depth: Int) -> [AXUIElement] {
+        if attr(element, kAXSubroleAttribute) as? String == "AXNotificationCenterBanner" { return [element] }
+        guard depth < 6 else { return [] }
+        return (attr(element, kAXChildrenAttribute) as? [AXUIElement] ?? []).flatMap { banners(in: $0, depth: depth + 1) }
+    }
+
+    private static func attr(_ element: AXUIElement, _ name: String) -> AnyObject? {
+        var value: AnyObject?
+        return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
     }
 }
