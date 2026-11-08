@@ -20,3 +20,7 @@ scripts/build.sh --install         # builds Kilele.app, copies it to /Applicatio
 ```
 
 See AGENTS.md for how it works.
+
+## Licence
+
+MIT (see LICENSE). The bundled mediaremote-adapter keeps its own BSD-3 licence (`Vendor/mediaremote-adapter/LICENSE`).

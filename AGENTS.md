@@ -113,3 +113,9 @@ Tabs are now **Now** (music), **Today** (calendar, countdown, studio), **Notes**
 ## 0.3.0 release (2026-10-26)
 
 - Released with `scripts/release.sh 0.3.0` (run by Claude at the user's request). The installed copy (built as 0.2.0) updated itself through gear › Check for updates › Update: download, signature check, swap and relaunch all worked, the first real run of the updater's install path.
+
+## 2026-11-08: Public repo, MIT
+
+- User's request: list Kilele on kimina.co.ke's Tech page and make this repo public. Added `LICENSE` (MIT, same as push2-traktor and alien-orrery) and a Licence line in the README; the bundled mediaremote-adapter keeps its BSD-3 licence.
+- Checked before going public: no secrets in the files or history. The only key is the Santuri Bookings publishable key in `StudioSlots.swift`, which is public by design. The user accepted that these notes name djpractice@santuri.org and the Santuri calendar names.
+- `Updater.swift` now uses GitHub's public API (no `gh` needed) because the repo is public.
